@@ -30,11 +30,6 @@ INDEX_HTML = """<!doctype html>
           <div class="team-sub">бело-красные</div>
         </div>
       </div>
-
-      <div class="hint">
-        Эмблемы: <code>assets/loko.png</code>, <code>assets/spartak.png</code>.
-        Лица: <code>assets/face_loko.png</code>, <code>assets/face_spartak.png</code>.
-      </div>
     </div>
 
     <div class="controls">
@@ -53,10 +48,6 @@ INDEX_HTML = """<!doctype html>
   <main class="stage">
     <canvas id="scene" width="1280" height="720" aria-label="Хоккейная анимация"></canvas>
   </main>
-
-  <footer class="footer">
-    <span>Запуск: <code>python -m http.server 8000</code> → <code>http://localhost:8000</code></span>
-  </footer>
 
   <script src="app.js"></script>
 </body>
@@ -98,7 +89,6 @@ body{
 }
 
 .title{min-width:320px; flex: 1 1 auto;}
-.hint{ margin-top:8px; color:var(--muted); font-size:13px; line-height:1.25; }
 
 .matchline{
   display:grid;
@@ -182,7 +172,7 @@ input[type="range"]{ width: 220px; }
 .btn:hover{ filter: brightness(1.08); }
 .btn.ghost{ background:transparent; }
 
-.stage{ padding:18px 16px 10px; display:flex; justify-content:center; }
+.stage{ padding:18px 16px 18px; display:flex; justify-content:center; }
 
 canvas#scene{
   width:min(1280px, 96vw);
@@ -192,9 +182,6 @@ canvas#scene{
   background:#07121d;
   box-shadow: 0 20px 60px rgba(0,0,0,.55);
 }
-
-.footer{ padding:10px 16px 18px; color:var(--muted); font-size:12px; text-align:center; }
-code{background:rgba(255,255,255,.08); padding:2px 6px; border-radius:8px; border:1px solid rgba(255,255,255,.08)}
 """
 
 APP_JS = r"""
@@ -220,25 +207,12 @@ APP_JS = r"""
     img.src = url;
   }
 
-  // ---------- Scene layout ----------
   const rink = { x: 90, y: 190, w: W - 180, h: 430, r: 70 };
   const stands = { x: 0, y: 0, w: W, h: 210 };
 
   const clubs = {
-    loko: {
-      key: "loko",
-      name: "ЛОКОМОТИВ ЯРОСЛАВЛЬ",
-      short: "ЛЯ",
-      primary: "#c81f2b",
-      secondary: "#1a1a1a"
-    },
-    spartak: {
-      key: "spartak",
-      name: "СПАРТАК ПЯТИГОРСК",
-      short: "СП",
-      primary: "#f7f7f7",
-      secondary: "#c81f2b"
-    }
+    loko: { key: "loko", name: "ЛОКОМОТИВ ЯРОСЛАВЛЬ", short: "ЛЯ", primary: "#c81f2b", secondary: "#1a1a1a" },
+    spartak: { key: "spartak", name: "СПАРТАК ПЯТИГОРСК", short: "СП", primary: "#f7f7f7", secondary: "#c81f2b" }
   };
 
   const state = {
@@ -250,63 +224,33 @@ APP_JS = r"""
 
     score: { loko: 0, spartak: 0 },
     period: 1,
-    timeLeft: 20 * 60, // секунд (20:00)
+    timeLeft: 20 * 60,
 
     lastShotAt: 0,
     nextShotIn: 2.2,
 
     flashUntil: 0,
-
     msg: "",
     msgUntil: 0
   };
 
-  // Ворота (позиции совпадают с рисованием)
   const goals = {
     left:  { x: rink.x + 100, y: rink.y + rink.h/2 },
     right: { x: rink.x + rink.w - 100, y: rink.y + rink.h/2 },
-    mouth: { w: 112, h: 74 } // примерный "проём" ворот для засчёта
+    mouth: { w: 112, h: 74 }
   };
 
-  // Вратари (простая модель)
   const goalies = {
     left:  { side: "left",  phase: 0.0, skill: 0.52, y: goals.left.y },
     right: { side: "right", phase: 1.2, skill: 0.52, y: goals.right.y }
   };
 
-  // Игроки (катаются туда-сюда)
   const players = [
-    {
-      club: clubs.loko,
-      x: rink.x + rink.w*0.22,
-      baseY: rink.y + rink.h * 0.68,
-      phase: 0.0,
-      scale: 1.35,
-      vx: 250,     // px/sec
-      dir: 1,      // 1 вправо, -1 влево
-      shootKick: 0
-    },
-    {
-      club: clubs.spartak,
-      x: rink.x + rink.w*0.55,
-      baseY: rink.y + rink.h * 0.40,
-      phase: 1.7,
-      scale: 1.25,
-      vx: 230,
-      dir: -1,
-      shootKick: 0
-    }
+    { club: clubs.loko, x: rink.x + rink.w*0.22, baseY: rink.y + rink.h * 0.68, phase: 0.0, scale: 1.35, vx: 250, dir: 1,  shootKick: 0 },
+    { club: clubs.spartak, x: rink.x + rink.w*0.55, baseY: rink.y + rink.h * 0.40, phase: 1.7, scale: 1.25, vx: 230, dir: -1, shootKick: 0 }
   ];
 
-  // Шайба
-  const puck = {
-    active: false,
-    x: 0, y: 0,
-    vx: 0, vy: 0,
-    shooter: null,
-    ttl: 0,
-    trail: []
-  };
+  const puck = { active: false, x: 0, y: 0, vx: 0, vy: 0, shooter: null, ttl: 0, trail: [] };
 
   function reset(){
     players[0].x = rink.x + rink.w*0.22;
@@ -324,7 +268,6 @@ APP_JS = r"""
     state.lastShotAt = 0;
     state.nextShotIn = 2.2;
     state.flashUntil = 0;
-
     state.msg = "";
     state.msgUntil = 0;
 
@@ -337,19 +280,13 @@ APP_JS = r"""
 
   function updateScoreboard(force=false){
     scoreEl.textContent = `${state.score.loko} : ${state.score.spartak}`;
-
     const mm = Math.floor(state.timeLeft / 60);
     const ss = Math.floor(state.timeLeft % 60);
-    const sst = String(ss).padStart(2, "0");
-    scoreSubEl.textContent = `${state.period} период • ${mm}:${sst}`;
+    scoreSubEl.textContent = `${state.period} период • ${mm}:${String(ss).padStart(2,"0")}`;
 
     if (force) return;
-
-    if (performance.now() < state.flashUntil){
-      scoreboardEl.classList.add("flash");
-    } else {
-      scoreboardEl.classList.remove("flash");
-    }
+    if (performance.now() < state.flashUntil) scoreboardEl.classList.add("flash");
+    else scoreboardEl.classList.remove("flash");
   }
 
   function flashAndMessage(text){
@@ -361,16 +298,13 @@ APP_JS = r"""
   function goalScored(teamKey){
     state.score[teamKey] += 1;
     flashAndMessage("ГОЛ!");
-    // пауза до следующего броска
     state.nextShotIn = 1.8 + Math.random()*2.2;
     state.lastShotAt = 0;
-
     puck.active = false;
     puck.trail = [];
     updateScoreboard();
   }
 
-  // ---------- Primitives ----------
   function roundedRectPath(x, y, w, h, r){
     const rr = Math.min(r, w/2, h/2);
     ctx.beginPath();
@@ -397,7 +331,6 @@ APP_JS = r"""
     ctx.strokeStyle = "#1d3a56";
     ctx.stroke();
 
-    // Center red line
     ctx.beginPath();
     ctx.moveTo(rink.x, rink.y + rink.h/2);
     ctx.lineTo(rink.x + rink.w, rink.y + rink.h/2);
@@ -405,7 +338,6 @@ APP_JS = r"""
     ctx.strokeStyle = "rgba(200,40,40,.55)";
     ctx.stroke();
 
-    // Blue lines
     for(const k of [0.33, 0.67]){
       const xx = rink.x + rink.w * k;
       ctx.beginPath();
@@ -416,7 +348,6 @@ APP_JS = r"""
       ctx.stroke();
     }
 
-    // Circles
     function circle(cx, cy, r, col){
       ctx.beginPath();
       ctx.arc(cx, cy, r, 0, Math.PI*2);
@@ -460,7 +391,6 @@ APP_JS = r"""
     ctx.fillStyle = g;
     ctx.fillRect(stands.x, stands.y, stands.w, stands.h);
 
-    // crowd dots
     ctx.save();
     ctx.globalAlpha = 0.75;
     for(let i=0;i<1400;i++){
@@ -473,17 +403,14 @@ APP_JS = r"""
     }
     ctx.restore();
 
-    // rail
     ctx.fillStyle = "rgba(255,255,255,.10)";
     ctx.fillRect(0, stands.h - 24, W, 2);
 
-    // banners
     const bannerY = stands.h - 86;
     drawBanner(120, bannerY, 470, 54, clubs.loko.name, "rgba(200,31,43,.85)");
     drawBanner(W - 590, bannerY, 470, 54, clubs.spartak.name, "rgba(255,255,255,.85)", "rgba(200,31,43,.95)");
   }
 
-  // ворота
   function drawGoal(cx, cy, scale=1.0){
     ctx.save();
     ctx.translate(cx, cy);
@@ -496,7 +423,6 @@ APP_JS = r"""
     ctx.fill();
     ctx.globalAlpha = 1;
 
-    // сетка
     ctx.save();
     ctx.strokeStyle = "rgba(120,140,160,.35)";
     ctx.lineWidth = 1;
@@ -514,7 +440,6 @@ APP_JS = r"""
     }
     ctx.restore();
 
-    // рама
     ctx.strokeStyle = "rgba(220,40,40,.95)";
     ctx.lineWidth = 6;
     ctx.lineCap = "round";
@@ -525,7 +450,6 @@ APP_JS = r"""
     ctx.lineTo( 52, 22);
     ctx.stroke();
 
-    // полозья
     ctx.strokeStyle = "rgba(220,40,40,.75)";
     ctx.lineWidth = 4;
     ctx.beginPath();
@@ -541,18 +465,15 @@ APP_JS = r"""
     const gx = (side === "left") ? goals.left.x : goals.right.x;
     const gy0 = (side === "left") ? goals.left.y : goals.right.y;
 
-    // "скольжение" вратаря по высоте ворот
     const sway = Math.sin(t*1.1 + g.phase) * 26;
     g.y = gy0 + sway;
 
     ctx.save();
     ctx.translate(gx, g.y);
 
-    // положение вратаря чуть внутри ворот
     const offsetX = (side === "left") ? 18 : -18;
     ctx.translate(offsetX, 18);
 
-    // тень
     ctx.globalAlpha = 0.22;
     ctx.beginPath();
     ctx.ellipse(0, 48, 26, 8, 0, 0, Math.PI*2);
@@ -560,25 +481,21 @@ APP_JS = r"""
     ctx.fill();
     ctx.globalAlpha = 1;
 
-    // тело
     ctx.fillStyle = "rgba(240,240,245,.92)";
     roundedRectPath(-14, 0, 28, 30, 10);
     ctx.fill();
 
-    // шлем
     ctx.fillStyle = "rgba(30,30,40,.92)";
     ctx.beginPath();
     ctx.arc(0, -8, 10, 0, Math.PI*2);
     ctx.fill();
 
-    // щитки
     ctx.fillStyle = "rgba(220,220,235,.95)";
     roundedRectPath(-18, 26, 14, 24, 7);
     ctx.fill();
     roundedRectPath(4, 26, 14, 24, 7);
     ctx.fill();
 
-    // клюшка вратаря
     ctx.strokeStyle = "rgba(90,60,25,.92)";
     ctx.lineWidth = 5;
     ctx.beginPath();
@@ -617,7 +534,6 @@ APP_JS = r"""
       return;
     }
 
-    // fallback
     ctx.save();
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI*2);
@@ -658,16 +574,12 @@ APP_JS = r"""
     return true;
   }
 
-  // ---------- Shooting mechanics ----------
   function getStickBladeWorld(p, tSec){
-    // приблизительная позиция лопатки клюшки (впереди по направлению движения)
     const bob = Math.sin(tSec*2.2 + p.phase) * 2.2;
     const x = p.x;
     const y = p.baseY + bob;
-
-    const ahead = 72 * p.scale * p.dir; // впереди игрока
+    const ahead = 72 * p.scale * p.dir;
     const down = 70 * p.scale;
-
     return { x: x + ahead, y: y + down };
   }
 
@@ -678,23 +590,16 @@ APP_JS = r"""
     const since = tSec - state.lastShotAt;
     if (since < state.nextShotIn) return;
 
-    // выбираем случайного стрелка
     const shooter = players[Math.random() < 0.5 ? 0 : 1];
-
-    // цель зависит от направления движения
     const target = (shooter.dir === 1) ? goals.right : goals.left;
     const goalie = (shooter.dir === 1) ? goalies.right : goalies.left;
 
-    // точка вылета шайбы
     const spawn = getStickBladeWorld(shooter, tSec);
 
-    // целимся примерно в створ, но с разбросом
     const ty = target.y + (Math.random()*120 - 60);
-    const tx = target.x + (shooter.dir === 1 ? -6 : 6); // чуть "внутрь"
+    const tx = target.x + (shooter.dir === 1 ? -6 : 6);
 
-    // скорость шайбы
     const speed = 860 + Math.random()*320;
-
     const dx = (tx - spawn.x);
     const dy = (ty - spawn.y);
     const len = Math.max(1, Math.hypot(dx, dy));
@@ -708,13 +613,9 @@ APP_JS = r"""
     puck.ttl = 2.4;
     puck.trail = [];
 
-    // анимация броска
     shooter.shootKick = 0.35;
-
-    // чуть поднимаем шанс сэйва если вратарь "в центре"
     goalie.skill = 0.48 + Math.random()*0.18;
 
-    // следующий бросок
     state.lastShotAt = tSec;
     state.nextShotIn = 2.0 + Math.random()*2.6;
   }
@@ -729,48 +630,40 @@ APP_JS = r"""
       return;
     }
 
-    // trail
     puck.trail.push({x: puck.x, y: puck.y});
     if (puck.trail.length > 18) puck.trail.shift();
 
     puck.x += puck.vx * dt;
     puck.y += puck.vy * dt;
 
-    // лёгкое затухание
     const drag = Math.max(0.0, 1.0 - dt * 0.22);
     puck.vx *= drag;
     puck.vy *= drag;
 
-    // отбивка от бортов по Y
     const top = rink.y + 18;
     const bottom = rink.y + rink.h - 18;
     if (puck.y < top){ puck.y = top; puck.vy = Math.abs(puck.vy) * 0.85; }
     if (puck.y > bottom){ puck.y = bottom; puck.vy = -Math.abs(puck.vy) * 0.85; }
 
-    // проверка взаимодействия с воротами (и вратарём)
-    checkGoalOrSave("left", tSec);
-    checkGoalOrSave("right", tSec);
+    checkGoalOrSave("left");
+    checkGoalOrSave("right");
 
-    // если улетела далеко
     if (puck.x < rink.x - 240 || puck.x > rink.x + rink.w + 240){
       puck.active = false;
       puck.trail = [];
     }
   }
 
-  function checkGoalOrSave(side, tSec){
+  function checkGoalOrSave(side){
     if (!puck.active) return;
 
     const gpos = (side === "left") ? goals.left : goals.right;
     const goalie = (side === "left") ? goalies.left : goalies.right;
 
-    // "линия ворот" и область створа
     const gx = gpos.x;
-    const gy = goalie.y; // вратарь двигается
-    const mw = goals.mouth.w;
+    const gy = goalie.y;
     const mh = goals.mouth.h;
 
-    // условие: шайба дошла до ворот с этой стороны
     const nearX = (side === "left")
       ? (puck.x <= gx + 18 && puck.x >= gx - 26)
       : (puck.x >= gx - 18 && puck.x <= gx + 26);
@@ -778,21 +671,17 @@ APP_JS = r"""
     if (!nearX) return;
 
     const inY = Math.abs(puck.y - gy) <= mh/2;
-
-    // если не по высоте — мимо, лёгкий отскок от конструкции
     if (!inY){
       puck.vx *= -0.55;
       puck.vy = (Math.random()*2 - 1) * 260;
       return;
     }
 
-    // шанс сэйва зависит от того, насколько шайба близко к центру вратаря
     const dist = Math.abs(puck.y - gy);
     const centerBonus = 1.0 - Math.min(1.0, dist / (mh/2));
     const saveChance = Math.min(0.92, goalie.skill * (0.55 + 0.45*centerBonus));
 
     if (Math.random() < saveChance){
-      // СЭЙВ: отбиваем в поле
       flashAndMessage("СЭЙВ!");
       const out = (side === "left") ? 1 : -1;
       puck.vx = Math.abs(puck.vx) * out * (0.65 + Math.random()*0.25);
@@ -801,14 +690,12 @@ APP_JS = r"""
       return;
     }
 
-    // если не спас — ГОЛ. Засчитываем команде бросавшего
     goalScored(puck.shooter.club.key);
   }
 
   function drawPuck(){
     if (!puck.active) return;
 
-    // trail
     ctx.save();
     for (let i=0;i<puck.trail.length;i++){
       const a = i / puck.trail.length;
@@ -820,7 +707,6 @@ APP_JS = r"""
     }
     ctx.restore();
 
-    // puck
     ctx.save();
     ctx.globalAlpha = 0.96;
     ctx.beginPath();
@@ -828,24 +714,19 @@ APP_JS = r"""
     ctx.fillStyle = "rgba(15,15,20,1)";
     ctx.fill();
 
-    // highlight
     ctx.globalAlpha = 0.25;
     ctx.beginPath();
     ctx.arc(puck.x-2.2, puck.y-2.2, 2.8, 0, Math.PI*2);
     ctx.fillStyle = "rgba(255,255,255,1)";
     ctx.fill();
-
     ctx.restore();
   }
 
-  // ---------- Player (skating + shooting) ----------
   function drawPlayer(p, t){
-    // скольжение и небольшой наклон
     const bob = Math.sin(t*2.2 + p.phase) * 2.2;
     const lean = Math.sin(t*1.4 + p.phase) * 0.06;
     const push = (Math.sin(t*2.8 + p.phase) * 0.5 + 0.5);
 
-    // shoot kick
     if (p.shootKick > 0) p.shootKick = Math.max(0, p.shootKick - 1/60);
     const kick = p.shootKick;
 
@@ -855,13 +736,9 @@ APP_JS = r"""
 
     ctx.save();
     ctx.translate(x, y);
-
-    // зеркалим игрока по направлению движения: едет влево — смотрит влево
     ctx.scale(p.scale * p.dir, p.scale);
-
     ctx.rotate(lean - kick*0.10);
 
-    // shadow
     ctx.save();
     ctx.globalAlpha = 0.22;
     ctx.beginPath();
@@ -870,7 +747,6 @@ APP_JS = r"""
     ctx.fill();
     ctx.restore();
 
-    // ice trail
     ctx.save();
     ctx.globalAlpha = 0.30;
     ctx.strokeStyle = "rgba(160,220,255,.40)";
@@ -881,7 +757,6 @@ APP_JS = r"""
     ctx.stroke();
     ctx.restore();
 
-    // stick (при броске сильнее)
     ctx.save();
     const baseAngle = -0.30;
     const stickAngle = baseAngle - kick*0.55;
@@ -903,7 +778,6 @@ APP_JS = r"""
     ctx.stroke();
     ctx.restore();
 
-    // torso
     ctx.save();
     roundedRectPath(-34, -10, 68, 82, 18);
     ctx.fillStyle = p.club.primary;
@@ -934,7 +808,6 @@ APP_JS = r"""
     drawEmblem(0, 28, 16, p.club);
     ctx.restore();
 
-    // head
     ctx.save();
     ctx.beginPath();
     ctx.arc(0, -28, 24, 0, Math.PI*2);
@@ -961,7 +834,6 @@ APP_JS = r"""
     }
     ctx.restore();
 
-    // arms
     ctx.save();
     ctx.lineWidth = 14;
     ctx.lineCap = "round";
@@ -970,14 +842,12 @@ APP_JS = r"""
     ctx.beginPath(); ctx.moveTo( 22, 14); ctx.lineTo( 44, 30); ctx.stroke();
     ctx.restore();
 
-    // pants
     ctx.save();
     roundedRectPath(-28, 64-28, 56, 30, 12);
     ctx.fillStyle = "rgba(20,20,20,.92)";
     ctx.fill();
     ctx.restore();
 
-    // legs + skates
     ctx.save();
     drawLegAndSkate(-12, 54, -0.05);
     const pushX = 12 + (push * 10);
@@ -1004,7 +874,6 @@ APP_JS = r"""
     ctx.save();
     ctx.translate(0, 40);
 
-    // boot
     ctx.fillStyle = "rgba(15,15,15,.95)";
     roundedRectPath(-14, -12, 28, 16, 6);
     ctx.fill();
@@ -1012,7 +881,6 @@ APP_JS = r"""
     ctx.fillStyle = "rgba(240,240,240,.22)";
     ctx.fillRect(-12, -9, 24, 2);
 
-    // holders
     ctx.strokeStyle = "rgba(200,200,200,.45)";
     ctx.lineWidth = 2;
     ctx.beginPath();
@@ -1020,7 +888,6 @@ APP_JS = r"""
     ctx.moveTo( 8, 3); ctx.lineTo( 8, 10);
     ctx.stroke();
 
-    // blade
     ctx.strokeStyle = "rgba(230,230,230,.95)";
     ctx.lineWidth = 3;
     ctx.beginPath();
@@ -1028,7 +895,6 @@ APP_JS = r"""
     ctx.lineTo( 16, 12);
     ctx.stroke();
 
-    // toe
     ctx.strokeStyle = "rgba(230,230,230,.75)";
     ctx.lineWidth = 2;
     ctx.beginPath();
@@ -1065,7 +931,6 @@ APP_JS = r"""
     ctx.restore();
   }
 
-  // ---------- Loop ----------
   let lastNow = performance.now();
 
   function tick(now){
@@ -1074,7 +939,6 @@ APP_JS = r"""
 
     state.speed = Number(speedSlider.value);
 
-    // игровое время
     if (state.running){
       state.timeLeft -= dt * state.speed;
       if (state.timeLeft <= 0){
@@ -1090,51 +954,30 @@ APP_JS = r"""
     drawStands();
     drawIce();
 
-    // ворота
     drawGoal(goals.left.x, goals.left.y, 1.05);
     drawGoal(goals.right.x, goals.right.y, 1.05);
 
-    // вратари
     drawGoalie("left", t);
     drawGoalie("right", t);
 
-    // движение игроков (катаются и разворачиваются)
     if (state.running){
       const leftBound = rink.x + 150;
       const rightBound = rink.x + rink.w - 150;
 
       for (const p of players){
         p.x += p.vx * p.dir * state.speed * dt;
-
-        if (p.x > rightBound){
-          p.x = rightBound;
-          p.dir = -1;
-        } else if (p.x < leftBound){
-          p.x = leftBound;
-          p.dir = 1;
-        }
+        if (p.x > rightBound){ p.x = rightBound; p.dir = -1; }
+        else if (p.x < leftBound){ p.x = leftBound; p.dir = 1; }
       }
 
-      // броски + шайба
       maybeShoot(t);
       updatePuck(dt * state.speed, t);
     }
 
-    // дальний первым
     drawPlayer(players[1], t);
     drawPlayer(players[0], t + 0.25);
 
-    // шайба поверх
     drawPuck();
-
-    // подпись + сообщение
-    ctx.save();
-    ctx.font = "800 14px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
-    ctx.fillStyle = "rgba(255,255,255,.72)";
-    ctx.textAlign = "left";
-    ctx.fillText("ХОККЕЙНАЯ ПЛОЩАДКА • Canvas demo", 16, H - 18);
-    ctx.restore();
-
     drawCenterMessage();
     drawVignette();
 
@@ -1142,7 +985,6 @@ APP_JS = r"""
     requestAnimationFrame(tick);
   }
 
-  // ---------- Controls ----------
   pauseBtn.addEventListener("click", () => {
     state.running = !state.running;
     pauseBtn.textContent = state.running ? "Пауза" : "Продолжить";
@@ -1150,13 +992,11 @@ APP_JS = r"""
 
   resetBtn.addEventListener("click", () => reset());
 
-  // ---------- Load assets from folder ----------
   loadImage("assets/loko.png", (img) => state.logos.loko = img);
   loadImage("assets/spartak.png", (img) => state.logos.spartak = img);
   loadImage("assets/face_loko.png", (img) => state.faces.loko = img);
   loadImage("assets/face_spartak.png", (img) => state.faces.spartak = img);
 
-  // Start
   reset();
   requestAnimationFrame(tick);
 })();
@@ -1171,6 +1011,7 @@ def main():
     write(OUT_DIR / "style.css", STYLE_CSS)
     write(OUT_DIR / "app.js", APP_JS)
 
+    # README в assets можно оставить — это не "главный экран", а просто файл в папке
     readme = OUT_DIR / "assets" / "README.txt"
     if not readme.exists():
         readme.write_text(
@@ -1182,10 +1023,7 @@ def main():
             encoding="utf-8",
         )
 
-    print("\nГотово.")
-    print("Проверь assets/: loko.png, spartak.png, face_loko.png, face_spartak.png")
-    print("Запуск: python -m http.server 8000")
-    print("Открыть: http://localhost:8000\n")
+    print("\nГотово. (Подсказки убраны с главного экрана)")
 
 if __name__ == "__main__":
     main()
