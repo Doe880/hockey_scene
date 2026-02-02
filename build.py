@@ -16,7 +16,11 @@ INDEX_HTML = """<!doctype html>
     <div class="title">
       <div class="matchline">
         <div class="team left">
-          <div class="team-name">Локомотив Ярославль</div>
+          <div class="team-row">
+            <img class="team-logo" src="assets/loko.png" alt="Эмблема Локомотив Ярославль"
+                 onerror="this.style.display='none'">
+            <div class="team-name">Локомотив Ярославль</div>
+          </div>
           <div class="team-sub">красные</div>
         </div>
 
@@ -26,7 +30,11 @@ INDEX_HTML = """<!doctype html>
         </div>
 
         <div class="team right">
-          <div class="team-name">Спартак Пятигорск</div>
+          <div class="team-row">
+            <div class="team-name">Спартак Пятигорск</div>
+            <img class="team-logo" src="assets/spartak.png" alt="Эмблема Спартак Пятигорск"
+                 onerror="this.style.display='none'">
+          </div>
           <div class="team-sub">бело-красные</div>
         </div>
       </div>
@@ -102,10 +110,29 @@ body{
   flex-direction:column;
   gap:2px;
 }
+
+.team-row{
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+
 .team.left{ align-items:flex-start; }
 .team.right{ align-items:flex-end; }
+.team.right .team-row{ justify-content:flex-end; }
 
-.team-name{ font-size:16px; font-weight:800; letter-spacing:.2px; }
+.team-logo{
+  width:32px;
+  height:32px;
+  border-radius:10px;
+  border:1px solid rgba(255,255,255,.14);
+  background:rgba(255,255,255,.06);
+  object-fit:contain;
+  padding:3px;
+  box-shadow: 0 6px 18px rgba(0,0,0,.25);
+}
+
+.team-name{ font-size:16px; font-weight:800; letter-spacing:.2px; white-space:nowrap; }
 .team-sub{ font-size:12px; color:var(--muted); }
 
 .scoreboard{
@@ -1011,7 +1038,7 @@ def main():
     write(OUT_DIR / "style.css", STYLE_CSS)
     write(OUT_DIR / "app.js", APP_JS)
 
-    # Оставляем README в папке assets (не отображается на главном экране)
+    # README в assets (не показывается на странице)
     readme = OUT_DIR / "assets" / "README.txt"
     if not readme.exists():
         readme.write_text(
@@ -1023,7 +1050,7 @@ def main():
             encoding="utf-8",
         )
 
-    print("\nГотово. Надписи про assets и запуск убраны с главного экрана.")
+    print("\nГотово. Эмблемы в табло добавлены (берутся из assets).")
 
 if __name__ == "__main__":
     main()
