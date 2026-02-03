@@ -7,7 +7,7 @@ INDEX_HTML = """<!doctype html>
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>Хоккейная сцена: Локомотив vs Спартак</title>
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -199,7 +199,11 @@ input[type="range"]{ width: 220px; }
 .btn:hover{ filter: brightness(1.08); }
 .btn.ghost{ background:transparent; }
 
-.stage{ padding:18px 16px 18px; display:flex; justify-content:center; }
+.stage{
+  padding:18px 16px 18px;
+  display:flex;
+  justify-content:center;
+}
 
 canvas#scene{
   width:min(1280px, 96vw);
@@ -208,6 +212,67 @@ canvas#scene{
   border:1px solid var(--border);
   background:#07121d;
   box-shadow: 0 20px 60px rgba(0,0,0,.55);
+  touch-action: manipulation;
+}
+
+/* ===== Mobile optimization ===== */
+@media (max-width: 720px){
+  .topbar{
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .matchline{
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    gap: 10px 12px;
+  }
+
+  .team.left{ grid-column: 1 / 2; grid-row: 1; }
+  .scoreboard{ grid-column: 2 / 3; grid-row: 1 / 3; align-self: center; }
+  .team.right{ grid-column: 1 / 2; grid-row: 2; }
+
+  .team-row{ gap: 8px; }
+  .team-logo{ width: 26px; height: 26px; border-radius: 9px; padding: 2px; }
+  .team-name{ font-size: 14px; }
+  .team-sub{ font-size: 11px; }
+
+  .scoreboard{ min-width: 130px; padding: 8px 10px; border-radius: 12px; }
+  .score{ font-size: 18px; }
+  .score-sub{ font-size: 11px; }
+
+  .controls{
+    justify-content: space-between;
+  }
+
+  .ctrl{
+    min-width: 0;
+    flex: 1 1 auto;
+    padding: 10px;
+  }
+
+  input[type="range"]{
+    width: 100%;
+    max-width: none;
+  }
+
+  .stage{
+    padding: 12px 10px 14px;
+  }
+
+  canvas#scene{
+    width: 100%;
+    border-radius: 14px;
+  }
+}
+
+/* совсем маленькие экраны */
+@media (max-width: 380px){
+  .team-name{ font-size: 13px; }
+  .team-logo{ width: 24px; height: 24px; }
+  .score{ font-size: 17px; }
 }
 """
 
@@ -224,8 +289,44 @@ APP_JS = r"""
   const scoreSubEl = document.getElementById("scoreSub");
   const scoreboardEl = document.getElementById("scoreboard");
 
-  const W = canvas.width;
-  const H = canvas.height;
+  // Видимые (CSS) размеры сцены
+  let W = 1280;
+  let H = 720;
+
+  function isMobileNow(){
+    return matchMedia("(max-width: 720px)").matches;
+  }
+
+  // HiDPI + resize
+  function resizeCanvasToDisplaySize(){
+    const rect = canvas.getBoundingClientRect();
+
+    // реальный CSS размер
+    const displayW = Math.max(320, Math.round(rect.width));
+    const displayH = Math.max(240, Math.round(rect.height || (rect.width * 9/16)));
+
+    // DPR ограничим до 2 (иначе на некоторых телефонах будет тяжело)
+    const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+
+    const newW = Math.round(displayW * dpr);
+    const newH = Math.round(displayH * dpr);
+
+    if (canvas.width !== newW || canvas.height !== newH){
+      canvas.width = newW;
+      canvas.height = newH;
+    }
+
+    // рисуем в координатах CSS, а не "сырых" пикселях
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    W = displayW;
+    H = displayH;
+  }
+
+  window.addEventListener("resize", () => {
+    resizeCanvasToDisplaySize();
+    layout();
+  });
 
   function loadImage(url, cb) {
     const img = new Image();
@@ -233,9 +334,6 @@ APP_JS = r"""
     img.onerror = () => cb(null);
     img.src = url;
   }
-
-  const rink = { x: 90, y: 190, w: W - 180, h: 430, r: 70 };
-  const stands = { x: 0, y: 0, w: W, h: 210 };
 
   const clubs = {
     loko: { key: "loko", name: "ЛОКОМОТИВ ЯРОСЛАВЛЬ", short: "ЛЯ", primary: "#c81f2b", secondary: "#1a1a1a" },
@@ -261,31 +359,95 @@ APP_JS = r"""
     msgUntil: 0
   };
 
-  const goals = {
-    left:  { x: rink.x + 100, y: rink.y + rink.h/2 },
-    right: { x: rink.x + rink.w - 100, y: rink.y + rink.h/2 },
-    mouth: { w: 112, h: 74 }
-  };
-
+  // Layout-dependent
+  let rink = null;
+  let stands = null;
+  let goals = null;
   const goalies = {
-    left:  { side: "left",  phase: 0.0, skill: 0.52, y: goals.left.y },
-    right: { side: "right", phase: 1.2, skill: 0.52, y: goals.right.y }
+    left:  { side: "left",  phase: 0.0, skill: 0.52, y: 0 },
+    right: { side: "right", phase: 1.2, skill: 0.52, y: 0 }
   };
 
+  // Игроки хранят позиции как доли (чтобы корректно пересчитывать на мобиле)
   const players = [
-    { club: clubs.loko, x: rink.x + rink.w*0.22, baseY: rink.y + rink.h * 0.68, phase: 0.0, scale: 1.35, vx: 250, dir: 1,  shootKick: 0 },
-    { club: clubs.spartak, x: rink.x + rink.w*0.55, baseY: rink.y + rink.h * 0.40, phase: 1.7, scale: 1.25, vx: 230, dir: -1, shootKick: 0 }
+    {
+      club: clubs.loko,
+      fracX: 0.22,
+      fracY: 0.68,
+      phase: 0.0,
+      scaleDesktop: 1.35,
+      scaleMobile: 1.18,
+      vxDesktop: 250,
+      vxMobile: 210,
+      dir: 1,
+      shootKick: 0,
+      x: 0,
+      baseY: 0,
+      scale: 1.3,
+      vx: 240
+    },
+    {
+      club: clubs.spartak,
+      fracX: 0.55,
+      fracY: 0.40,
+      phase: 1.7,
+      scaleDesktop: 1.25,
+      scaleMobile: 1.10,
+      vxDesktop: 230,
+      vxMobile: 200,
+      dir: -1,
+      shootKick: 0,
+      x: 0,
+      baseY: 0,
+      scale: 1.2,
+      vx: 220
+    }
   ];
 
   const puck = { active: false, x: 0, y: 0, vx: 0, vy: 0, shooter: null, ttl: 0, trail: [] };
 
+  function layout(){
+    // адаптивные отступы и размеры
+    const marginX = Math.max(18, Math.round(W * 0.06));
+    const topY = Math.max(isMobileNow() ? 120 : 160, Math.round(H * (isMobileNow() ? 0.22 : 0.26)));
+    const rinkH = Math.min(Math.round(H * (isMobileNow() ? 0.62 : 0.60)), isMobileNow() ? 420 : 460);
+
+    rink = {
+      x: marginX,
+      y: topY,
+      w: W - marginX*2,
+      h: rinkH,
+      r: Math.max(40, Math.round(Math.min(W, H) * 0.08)),
+    };
+
+    stands = { x: 0, y: 0, w: W, h: Math.max(140, Math.round(topY * 0.95)) };
+
+    goals = {
+      left:  { x: rink.x + Math.max(70, Math.round(rink.w*0.10)), y: rink.y + rink.h/2 },
+      right: { x: rink.x + rink.w - Math.max(70, Math.round(rink.w*0.10)), y: rink.y + rink.h/2 },
+      mouth: { w: Math.max(92, Math.round(rink.w * 0.10)), h: Math.max(64, Math.round(rink.h * 0.16)) }
+    };
+
+    goalies.left.y = goals.left.y;
+    goalies.right.y = goals.right.y;
+
+    // Подстройка игроков под размер сцены
+    const mob = isMobileNow();
+    for (const p of players){
+      p.scale = mob ? p.scaleMobile : p.scaleDesktop;
+      p.vx = mob ? p.vxMobile : p.vxDesktop;
+      p.baseY = rink.y + rink.h * p.fracY;
+      p.x = rink.x + rink.w * p.fracX;
+    }
+  }
+
   function reset(){
-    players[0].x = rink.x + rink.w*0.22;
-    players[1].x = rink.x + rink.w*0.55;
-    players[0].dir = 1;
-    players[1].dir = -1;
-    players[0].shootKick = 0;
-    players[1].shootKick = 0;
+    for (const p of players){
+      p.x = rink.x + rink.w * p.fracX;
+      p.baseY = rink.y + rink.h * p.fracY;
+      p.shootKick = 0;
+      // направление оставим как задано
+    }
 
     state.score.loko = 0;
     state.score.spartak = 0;
@@ -358,6 +520,7 @@ APP_JS = r"""
     ctx.strokeStyle = "#1d3a56";
     ctx.stroke();
 
+    // Center red line
     ctx.beginPath();
     ctx.moveTo(rink.x, rink.y + rink.h/2);
     ctx.lineTo(rink.x + rink.w, rink.y + rink.h/2);
@@ -365,6 +528,7 @@ APP_JS = r"""
     ctx.strokeStyle = "rgba(200,40,40,.55)";
     ctx.stroke();
 
+    // Blue lines
     for(const k of [0.33, 0.67]){
       const xx = rink.x + rink.w * k;
       ctx.beginPath();
@@ -375,6 +539,7 @@ APP_JS = r"""
       ctx.stroke();
     }
 
+    // Circles
     function circle(cx, cy, r, col){
       ctx.beginPath();
       ctx.arc(cx, cy, r, 0, Math.PI*2);
@@ -418,11 +583,17 @@ APP_JS = r"""
     ctx.fillStyle = g;
     ctx.fillRect(stands.x, stands.y, stands.w, stands.h);
 
+    // crowd dots (на мобиле чуть меньше)
+    const mob = isMobileNow();
+    const dots = mob ? 780 : 1400;
+    const stepX = mob ? 19 : 17;
+    const stepY = 10;
+
     ctx.save();
     ctx.globalAlpha = 0.75;
-    for(let i=0;i<1400;i++){
-      const x = (i*17) % W;
-      const y = (Math.floor(i*17 / W) * 10) + 36;
+    for(let i=0;i<dots;i++){
+      const x = (i*stepX) % W;
+      const y = (Math.floor(i*stepX / W) * stepY) + 34;
       if (y > stands.h - 22) break;
       const v = (i*37) % 100;
       ctx.fillStyle = v < 33 ? "rgba(240,240,255,.35)" : v < 66 ? "rgba(255,120,120,.25)" : "rgba(120,200,255,.22)";
@@ -430,14 +601,22 @@ APP_JS = r"""
     }
     ctx.restore();
 
+    // rail
     ctx.fillStyle = "rgba(255,255,255,.10)";
     ctx.fillRect(0, stands.h - 24, W, 2);
 
+    // banners (масштабируем под ширину)
     const bannerY = stands.h - 86;
-    drawBanner(120, bannerY, 470, 54, clubs.loko.name, "rgba(200,31,43,.85)");
-    drawBanner(W - 590, bannerY, 470, 54, clubs.spartak.name, "rgba(255,255,255,.85)", "rgba(200,31,43,.95)");
+    const bw = Math.min(470, Math.round(W * 0.42));
+    const gap = Math.round(W * 0.06);
+    const leftX = Math.max(14, Math.round(W * 0.08));
+    const rightX = Math.min(W - leftX - bw, leftX + bw + gap);
+
+    drawBanner(leftX, bannerY, bw, 54, clubs.loko.name, "rgba(200,31,43,.85)");
+    drawBanner(rightX, bannerY, bw, 54, clubs.spartak.name, "rgba(255,255,255,.85)", "rgba(200,31,43,.95)");
   }
 
+  // ворота
   function drawGoal(cx, cy, scale=1.0){
     ctx.save();
     ctx.translate(cx, cy);
@@ -450,6 +629,7 @@ APP_JS = r"""
     ctx.fill();
     ctx.globalAlpha = 1;
 
+    // сетка
     ctx.save();
     ctx.strokeStyle = "rgba(120,140,160,.35)";
     ctx.lineWidth = 1;
@@ -467,6 +647,7 @@ APP_JS = r"""
     }
     ctx.restore();
 
+    // рама
     ctx.strokeStyle = "rgba(220,40,40,.95)";
     ctx.lineWidth = 6;
     ctx.lineCap = "round";
@@ -477,6 +658,7 @@ APP_JS = r"""
     ctx.lineTo( 52, 22);
     ctx.stroke();
 
+    // полозья
     ctx.strokeStyle = "rgba(220,40,40,.75)";
     ctx.lineWidth = 4;
     ctx.beginPath();
@@ -492,7 +674,7 @@ APP_JS = r"""
     const gx = (side === "left") ? goals.left.x : goals.right.x;
     const gy0 = (side === "left") ? goals.left.y : goals.right.y;
 
-    const sway = Math.sin(t*1.1 + g.phase) * 26;
+    const sway = Math.sin(t*1.1 + g.phase) * (isMobileNow() ? 20 : 26);
     g.y = gy0 + sway;
 
     ctx.save();
@@ -626,7 +808,7 @@ APP_JS = r"""
     const ty = target.y + (Math.random()*120 - 60);
     const tx = target.x + (shooter.dir === 1 ? -6 : 6);
 
-    const speed = 860 + Math.random()*320;
+    const speed = (isMobileNow() ? 780 : 860) + Math.random()*(isMobileNow() ? 280 : 320);
     const dx = (tx - spawn.x);
     const dy = (ty - spawn.y);
     const len = Math.max(1, Math.hypot(dx, dy));
@@ -637,14 +819,14 @@ APP_JS = r"""
     puck.vx = dx / len * speed;
     puck.vy = dy / len * speed;
     puck.shooter = shooter;
-    puck.ttl = 2.4;
+    puck.ttl = 2.2;
     puck.trail = [];
 
     shooter.shootKick = 0.35;
     goalie.skill = 0.48 + Math.random()*0.18;
 
     state.lastShotAt = tSec;
-    state.nextShotIn = 2.0 + Math.random()*2.6;
+    state.nextShotIn = (isMobileNow() ? 2.2 : 2.0) + Math.random()*(isMobileNow() ? 2.8 : 2.6);
   }
 
   function updatePuck(dt){
@@ -657,8 +839,9 @@ APP_JS = r"""
       return;
     }
 
+    const TRAIL_MAX = isMobileNow() ? 10 : 18;
     puck.trail.push({x: puck.x, y: puck.y});
-    if (puck.trail.length > 18) puck.trail.shift();
+    if (puck.trail.length > TRAIL_MAX) puck.trail.shift();
 
     puck.x += puck.vx * dt;
     puck.y += puck.vy * dt;
@@ -713,7 +896,7 @@ APP_JS = r"""
       const out = (side === "left") ? 1 : -1;
       puck.vx = Math.abs(puck.vx) * out * (0.65 + Math.random()*0.25);
       puck.vy = (Math.random()*2 - 1) * 320;
-      puck.ttl = Math.min(puck.ttl, 1.2);
+      puck.ttl = Math.min(puck.ttl, 1.15);
       return;
     }
 
@@ -766,6 +949,7 @@ APP_JS = r"""
     ctx.scale(p.scale * p.dir, p.scale);
     ctx.rotate(lean - kick*0.10);
 
+    // shadow
     ctx.save();
     ctx.globalAlpha = 0.22;
     ctx.beginPath();
@@ -774,6 +958,7 @@ APP_JS = r"""
     ctx.fill();
     ctx.restore();
 
+    // ice trail
     ctx.save();
     ctx.globalAlpha = 0.30;
     ctx.strokeStyle = "rgba(160,220,255,.40)";
@@ -784,6 +969,7 @@ APP_JS = r"""
     ctx.stroke();
     ctx.restore();
 
+    // stick
     ctx.save();
     const baseAngle = -0.30;
     const stickAngle = baseAngle - kick*0.55;
@@ -805,6 +991,7 @@ APP_JS = r"""
     ctx.stroke();
     ctx.restore();
 
+    // torso
     ctx.save();
     roundedRectPath(-34, -10, 68, 82, 18);
     ctx.fillStyle = p.club.primary;
@@ -835,6 +1022,7 @@ APP_JS = r"""
     drawEmblem(0, 28, 16, p.club);
     ctx.restore();
 
+    // head
     ctx.save();
     ctx.beginPath();
     ctx.arc(0, -28, 24, 0, Math.PI*2);
@@ -861,6 +1049,7 @@ APP_JS = r"""
     }
     ctx.restore();
 
+    // arms
     ctx.save();
     ctx.lineWidth = 14;
     ctx.lineCap = "round";
@@ -869,12 +1058,14 @@ APP_JS = r"""
     ctx.beginPath(); ctx.moveTo( 22, 14); ctx.lineTo( 44, 30); ctx.stroke();
     ctx.restore();
 
+    // pants
     ctx.save();
     roundedRectPath(-28, 64-28, 56, 30, 12);
     ctx.fillStyle = "rgba(20,20,20,.92)";
     ctx.fill();
     ctx.restore();
 
+    // legs + skates
     ctx.save();
     drawLegAndSkate(-12, 54, -0.05);
     const pushX = 12 + (push * 10);
@@ -948,7 +1139,7 @@ APP_JS = r"""
   function drawCenterMessage(){
     if (performance.now() > state.msgUntil) return;
     ctx.save();
-    ctx.font = "900 40px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
+    ctx.font = `900 ${isMobileNow() ? 32 : 40}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillStyle = "rgba(255,255,255,.90)";
@@ -977,19 +1168,24 @@ APP_JS = r"""
 
     const t = ((now - state.t0) / 1000) * (state.running ? state.speed : 0);
 
+    // Ресайз + лэйаут (на всякий случай: например при изменении адресной строки браузера на мобиле)
+    resizeCanvasToDisplaySize();
+    layout();
+
     ctx.clearRect(0, 0, W, H);
+
     drawStands();
     drawIce();
 
-    drawGoal(goals.left.x, goals.left.y, 1.05);
-    drawGoal(goals.right.x, goals.right.y, 1.05);
+    drawGoal(goals.left.x, goals.left.y, isMobileNow() ? 0.95 : 1.05);
+    drawGoal(goals.right.x, goals.right.y, isMobileNow() ? 0.95 : 1.05);
 
     drawGoalie("left", t);
     drawGoalie("right", t);
 
     if (state.running){
-      const leftBound = rink.x + 150;
-      const rightBound = rink.x + rink.w - 150;
+      const leftBound = rink.x + Math.max(120, Math.round(rink.w * 0.14));
+      const rightBound = rink.x + rink.w - Math.max(120, Math.round(rink.w * 0.14));
 
       for (const p of players){
         p.x += p.vx * p.dir * state.speed * dt;
@@ -1001,6 +1197,7 @@ APP_JS = r"""
       updatePuck(dt * state.speed);
     }
 
+    // дальний первым
     drawPlayer(players[1], t);
     drawPlayer(players[0], t + 0.25);
 
@@ -1019,11 +1216,15 @@ APP_JS = r"""
 
   resetBtn.addEventListener("click", () => reset());
 
+  // Load assets from folder
   loadImage("assets/loko.png", (img) => state.logos.loko = img);
   loadImage("assets/spartak.png", (img) => state.logos.spartak = img);
   loadImage("assets/face_loko.png", (img) => state.faces.loko = img);
   loadImage("assets/face_spartak.png", (img) => state.faces.spartak = img);
 
+  // Start
+  resizeCanvasToDisplaySize();
+  layout();
   reset();
   requestAnimationFrame(tick);
 })();
@@ -1038,7 +1239,6 @@ def main():
     write(OUT_DIR / "style.css", STYLE_CSS)
     write(OUT_DIR / "app.js", APP_JS)
 
-    # README в assets (не показывается на странице)
     readme = OUT_DIR / "assets" / "README.txt"
     if not readme.exists():
         readme.write_text(
@@ -1050,7 +1250,7 @@ def main():
             encoding="utf-8",
         )
 
-    print("\nГотово. Эмблемы в табло добавлены (берутся из assets).")
+    print("\nГотово. Мобильная оптимизация включена (адаптивная шапка + HiDPI canvas).")
 
 if __name__ == "__main__":
     main()
