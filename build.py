@@ -1,18 +1,21 @@
 from pathlib import Path
+from datetime import datetime
 
 OUT_DIR = Path(".")
 (OUT_DIR / "assets").mkdir(exist_ok=True)
 
-INDEX_HTML = """<!doctype html>
+BUILD_VER = datetime.now().strftime("%Y%m%d%H%M%S")
+
+INDEX_HTML = f"""<!doctype html>
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>Хоккейная сцена: Локомотив vs Спартак</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v={BUILD_VER}" />
 </head>
 <body>
-  <header class="topbar">
+  <header class="topbar" id="topbar">
     <div class="title">
       <div class="matchline">
         <div class="team left">
@@ -57,7 +60,7 @@ INDEX_HTML = """<!doctype html>
     <canvas id="scene" width="1280" height="720" aria-label="Хоккейная анимация"></canvas>
   </main>
 
-  <script src="app.js"></script>
+  <script src="app.js?v={BUILD_VER}"></script>
 </body>
 </html>
 """
@@ -68,6 +71,11 @@ STYLE_CSS = """
   --text:#e8eef8;
   --muted:#a7b3c6;
   --border:rgba(255,255,255,.10);
+
+  /* будут выставляться JS-ом */
+  --vh: 1vh;
+  --header-h: 0px;
+  --stage-gap: 18px;
 }
 
 *{box-sizing:border-box}
@@ -142,19 +150,10 @@ body{
   text-align:center;
   box-shadow: 0 10px 25px rgba(0,0,0,.25);
 }
-.score{
-  font-size:22px;
-  font-weight:900;
-  letter-spacing:1px;
-}
-.score-sub{
-  margin-top:2px;
-  font-size:12px;
-  color:var(--muted);
-}
-.scoreboard.flash{
-  animation: flash 420ms ease-in-out 0s 2;
-}
+.score{ font-size:22px; font-weight:900; letter-spacing:1px; }
+.score-sub{ margin-top:2px; font-size:12px; color:var(--muted); }
+
+.scoreboard.flash{ animation: flash 420ms ease-in-out 0s 2; }
 @keyframes flash {
   0%{ transform: translateY(0); filter:brightness(1); }
   50%{ transform: translateY(-1px); filter:brightness(1.35); }
@@ -179,7 +178,6 @@ body{
   border-radius:14px;
   min-width:190px;
 }
-
 .ctrl.row{ min-width:auto; flex-direction:row; align-items:center; gap:10px; }
 
 .lbl{ font-size:12px; color:var(--muted); }
@@ -198,14 +196,17 @@ input[type="range"]{ width: 220px; }
 .btn.ghost{ background:transparent; }
 
 .stage{
-  padding:18px 16px 18px;
+  padding: var(--stage-gap);
   display:flex;
   justify-content:center;
 }
 
+/* Важно: canvas держит 16:9 и ограничен видимой высотой экрана (JS даст --vh и --header-h) */
 canvas#scene{
   width:min(1280px, 96vw);
+  aspect-ratio: 16 / 9;
   height:auto;
+  max-height: calc((var(--vh) * 100) - var(--header-h) - (var(--stage-gap) * 2) - 10px);
   border-radius:18px;
   border:1px solid var(--border);
   background:#07121d;
@@ -213,8 +214,10 @@ canvas#scene{
   touch-action: manipulation;
 }
 
-/* ===== Mobile optimization ===== */
+/* ===== Mobile layout ===== */
 @media (max-width: 720px){
+  :root{ --stage-gap: 12px; }
+
   .topbar{
     flex-direction: column;
     align-items: stretch;
@@ -251,18 +254,12 @@ canvas#scene{
 
   input[type="range"]{ width: 100%; max-width: none; }
 
-  .stage{ padding: 12px 10px 14px; }
+  .stage{ padding: var(--stage-gap); }
 
   canvas#scene{
     width: 100%;
     border-radius: 14px;
   }
-}
-
-@media (max-width: 380px){
-  .team-name{ font-size: 13px; }
-  .team-logo{ width: 24px; height: 24px; }
-  .score{ font-size: 17px; }
 }
 """
 
@@ -279,54 +276,84 @@ APP_JS = r"""
   const scoreSubEl = document.getElementById("scoreSub");
   const scoreboardEl = document.getElementById("scoreboard");
 
-  const topbarEl = document.querySelector(".topbar");
+  const topbarEl = document.getElementById("topbar");
 
-  // CSS-coords размеры сцены
+  // CSS-координаты
   let W = 1280;
   let H = 720;
-  let lastW = 0;
-  let lastH = 0;
+  let lastCssW = 0;
+  let lastCssH = 0;
 
   function isMobileNow(){
     return matchMedia("(max-width: 720px)").matches;
   }
 
-  // стабильное 16:9 + HiDPI
-  function resizeCanvasToDisplaySize(){
-    const rect = canvas.getBoundingClientRect();
+  // === Mobile-first: реальные видимые размеры экрана через visualViewport ===
+  function updateViewportVars(){
+    const vv = window.visualViewport;
+    const vhPx = vv ? vv.height : window.innerHeight;
     const headerH = topbarEl ? Math.round(topbarEl.getBoundingClientRect().height) : 0;
 
-    const displayW = Math.max(320, Math.round(rect.width));
+    document.documentElement.style.setProperty("--vh", (vhPx * 0.01) + "px");
+    document.documentElement.style.setProperty("--header-h", headerH + "px");
+  }
 
-    // держим 16:9 и ограничиваем по доступной высоте окна
-    const idealH = Math.round(displayW * 9 / 16);
-    const maxH = Math.max(240, Math.round(window.innerHeight - headerH - 28));
-    const displayH = Math.min(idealH, maxH);
+  function desiredCanvasCssSize(){
+    // ширина — по контейнеру
+    const rect = canvas.getBoundingClientRect();
+    const cssW = Math.max(320, Math.round(rect.width || window.innerWidth));
 
-    const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    // высота — строгие 16:9, но не больше видимой области
+    const headerH = topbarEl ? Math.round(topbarEl.getBoundingClientRect().height) : 0;
+    const vv = window.visualViewport;
+    const visibleH = vv ? vv.height : window.innerHeight;
 
-    const newW = Math.round(displayW * dpr);
-    const newH = Math.round(displayH * dpr);
+    const gap = isMobileNow() ? 24 : 36;
+    const maxH = Math.max(240, Math.round(visibleH - headerH - gap));
+    const idealH = Math.round(cssW * 9 / 16);
+    const cssH = Math.min(idealH, maxH);
 
-    if (canvas.width !== newW || canvas.height !== newH){
-      canvas.width = newW;
-      canvas.height = newH;
+    return { cssW, cssH };
+  }
+
+  function resizeCanvas(){
+    updateViewportVars();
+
+    const { cssW, cssH } = desiredCanvasCssSize();
+
+    W = cssW;
+    H = cssH;
+
+    // DPR ограничиваем сильнее на мобиле ради стабильности
+    const dprLimit = isMobileNow() ? 1.75 : 2;
+    const dpr = Math.max(1, Math.min(dprLimit, window.devicePixelRatio || 1));
+
+    const pxW = Math.round(cssW * dpr);
+    const pxH = Math.round(cssH * dpr);
+
+    if (canvas.width !== pxW || canvas.height !== pxH){
+      canvas.width = pxW;
+      canvas.height = pxH;
     }
-
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    W = displayW;
-    H = displayH;
-
-    const changed = (W !== lastW) || (H !== lastH);
-    lastW = W; lastH = H;
+    const changed = (cssW !== lastCssW) || (cssH !== lastCssH);
+    lastCssW = cssW; lastCssH = cssH;
     return changed;
   }
 
+  // слушаем “живую” мобильную область (адресная строка/клава)
+  if (window.visualViewport){
+    window.visualViewport.addEventListener("resize", () => {
+      if (resizeCanvas()) layout(true);
+    });
+    window.visualViewport.addEventListener("scroll", () => {
+      // иногда высота меняется при скролле
+      if (resizeCanvas()) layout(true);
+    });
+  }
   window.addEventListener("resize", () => {
-    if (resizeCanvasToDisplaySize()){
-      layout(true);
-    }
+    if (resizeCanvas()) layout(true);
   });
 
   function loadImage(url, cb) {
@@ -360,6 +387,7 @@ APP_JS = r"""
     msgUntil: 0
   };
 
+  // Layout-dependent
   let rink = null;
   let stands = null;
   let goals = null;
@@ -369,35 +397,36 @@ APP_JS = r"""
     right: { side: "right", phase: 1.2, skill: 0.52, y: 0 }
   };
 
-  // Игроки: fracX/fracY — стартовые “доли” (для reset), а реальные x/baseY живут сами
+  // Mobile приоритет: scaleMobile заметно меньше
   const players = [
-    { club: clubs.loko,    fracX: 0.22, fracY: 0.68, phase: 0.0, scaleDesktop: 1.35, scaleMobile: 1.18, vxDesktop: 250, vxMobile: 210, dir: 1,  shootKick: 0, x: 0, baseY: 0, scale: 1.3, vx: 240 },
-    { club: clubs.spartak, fracX: 0.55, fracY: 0.40, phase: 1.7, scaleDesktop: 1.25, scaleMobile: 1.10, vxDesktop: 230, vxMobile: 200, dir: -1, shootKick: 0, x: 0, baseY: 0, scale: 1.2, vx: 220 }
+    { club: clubs.loko,    fracX: 0.22, fracY: 0.72, phase: 0.0, scaleDesktop: 1.20, scaleMobile: 0.82, vxDesktop: 240, vxMobile: 180, dir: 1,  shootKick: 0, x: 0, baseY: 0, scale: 1.0, vx: 200 },
+    { club: clubs.spartak, fracX: 0.58, fracY: 0.46, phase: 1.7, scaleDesktop: 1.12, scaleMobile: 0.78, vxDesktop: 220, vxMobile: 170, dir: -1, shootKick: 0, x: 0, baseY: 0, scale: 1.0, vx: 190 }
   ];
 
   const puck = { active: false, x: 0, y: 0, vx: 0, vy: 0, shooter: null, ttl: 0, trail: [] };
 
-  function layout(rescalePositions){
+  function layout(rescale){
     const oldRink = rink ? { ...rink } : null;
 
-    const marginX = Math.max(18, Math.round(W * 0.06));
-    const topY = Math.max(isMobileNow() ? 110 : 150, Math.round(H * (isMobileNow() ? 0.20 : 0.24)));
-    const rinkH = Math.min(Math.round(H * 0.62), isMobileNow() ? 420 : 460);
+    // Mobile-first: каток максимально крупный
+    const marginX = Math.max(14, Math.round(W * 0.045));
+    const topY = Math.max(Math.round(H * 0.18), 78);
+    const rinkH = Math.min(Math.round(H * 0.72), H - topY - 18);
 
     rink = {
       x: marginX,
       y: topY,
       w: W - marginX*2,
       h: rinkH,
-      r: Math.max(40, Math.round(Math.min(W, H) * 0.08)),
+      r: Math.max(32, Math.round(Math.min(W, H) * 0.075)),
     };
 
-    stands = { x: 0, y: 0, w: W, h: Math.max(140, Math.round(topY * 0.95)) };
+    stands = { x: 0, y: 0, w: W, h: Math.max(110, Math.round(topY * 0.95)) };
 
     goals = {
-      left:  { x: rink.x + Math.max(70, Math.round(rink.w*0.10)), y: rink.y + rink.h/2 },
-      right: { x: rink.x + rink.w - Math.max(70, Math.round(rink.w*0.10)), y: rink.y + rink.h/2 },
-      mouth: { w: Math.max(92, Math.round(rink.w * 0.10)), h: Math.max(64, Math.round(rink.h * 0.16)) }
+      left:  { x: rink.x + Math.max(60, Math.round(rink.w*0.10)), y: rink.y + rink.h/2 },
+      right: { x: rink.x + rink.w - Math.max(60, Math.round(rink.w*0.10)), y: rink.y + rink.h/2 },
+      mouth: { w: Math.max(86, Math.round(rink.w * 0.10)), h: Math.max(58, Math.round(rink.h * 0.16)) }
     };
 
     goalies.left.y = goals.left.y;
@@ -409,9 +438,8 @@ APP_JS = r"""
       p.vx = mob ? p.vxMobile : p.vxDesktop;
     }
 
-    // ВАЖНО: при ресайзе НЕ возвращаем игроков в старт!
-    // Вместо этого переносим их пропорционально новому катку.
-    if (rescalePositions && oldRink){
+    // Не телепортируем при ресайзе — переносим пропорционально
+    if (rescale && oldRink){
       for (const p of players){
         const fx = (p.x - oldRink.x) / Math.max(1, oldRink.w);
         const fy = (p.baseY - oldRink.y) / Math.max(1, oldRink.h);
@@ -505,14 +533,14 @@ APP_JS = r"""
     ctx.fillStyle = g;
     ctx.fill();
 
-    ctx.lineWidth = 8;
+    ctx.lineWidth = 6;
     ctx.strokeStyle = "#1d3a56";
     ctx.stroke();
 
     ctx.beginPath();
     ctx.moveTo(rink.x, rink.y + rink.h/2);
     ctx.lineTo(rink.x + rink.w, rink.y + rink.h/2);
-    ctx.lineWidth = 4;
+    ctx.lineWidth = 3;
     ctx.strokeStyle = "rgba(200,40,40,.55)";
     ctx.stroke();
 
@@ -521,45 +549,10 @@ APP_JS = r"""
       ctx.beginPath();
       ctx.moveTo(xx, rink.y);
       ctx.lineTo(xx, rink.y + rink.h);
-      ctx.lineWidth = 4;
+      ctx.lineWidth = 3;
       ctx.strokeStyle = "rgba(40,120,220,.50)";
       ctx.stroke();
     }
-
-    function circle(cx, cy, r, col){
-      ctx.beginPath();
-      ctx.arc(cx, cy, r, 0, Math.PI*2);
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = col;
-      ctx.stroke();
-    }
-    circle(rink.x + rink.w*0.25, rink.y + rink.h*0.33, 38, "rgba(200,40,40,.45)");
-    circle(rink.x + rink.w*0.75, rink.y + rink.h*0.33, 38, "rgba(200,40,40,.45)");
-    circle(rink.x + rink.w*0.25, rink.y + rink.h*0.67, 38, "rgba(200,40,40,.45)");
-    circle(rink.x + rink.w*0.75, rink.y + rink.h*0.67, 38, "rgba(200,40,40,.45)");
-    circle(rink.x + rink.w*0.50, rink.y + rink.h*0.50, 56, "rgba(200,40,40,.45)");
-  }
-
-  function drawBanner(x, y, w, h, text, fill, stripe="rgba(20,20,20,.65)"){
-    ctx.save();
-    roundedRectPath(x, y, w, h, 14);
-    ctx.fillStyle = fill;
-    ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = "rgba(255,255,255,.20)";
-    ctx.stroke();
-
-    ctx.globalAlpha = 0.9;
-    ctx.fillStyle = stripe;
-    ctx.fillRect(x, y + h - 10, w, 10);
-
-    ctx.globalAlpha = 1;
-    ctx.font = "800 18px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
-    ctx.fillStyle = fill.startsWith("rgba(255") ? "rgba(10,10,10,.9)" : "rgba(255,255,255,.95)";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(text, x + w/2, y + h/2 - 2);
-    ctx.restore();
   }
 
   function drawStands(){
@@ -569,15 +562,14 @@ APP_JS = r"""
     ctx.fillStyle = g;
     ctx.fillRect(stands.x, stands.y, stands.w, stands.h);
 
-    const mob = isMobileNow();
-    const dots = mob ? 800 : 1400;
-    const stepX = mob ? 19 : 17;
+    const dots = 700; // мобильно и легко
+    const stepX = 19;
 
     ctx.save();
     ctx.globalAlpha = 0.75;
     for(let i=0;i<dots;i++){
       const x = (i*stepX) % W;
-      const y = (Math.floor(i*stepX / W) * 10) + 34;
+      const y = (Math.floor(i*stepX / W) * 10) + 28;
       if (y > stands.h - 22) break;
       const v = (i*37) % 100;
       ctx.fillStyle = v < 33 ? "rgba(240,240,255,.35)" : v < 66 ? "rgba(255,120,120,.25)" : "rgba(120,200,255,.22)";
@@ -586,16 +578,7 @@ APP_JS = r"""
     ctx.restore();
 
     ctx.fillStyle = "rgba(255,255,255,.10)";
-    ctx.fillRect(0, stands.h - 24, W, 2);
-
-    const bannerY = stands.h - 86;
-    const bw = Math.min(470, Math.round(W * 0.42));
-    const gap = Math.round(W * 0.06);
-    const leftX = Math.max(14, Math.round(W * 0.08));
-    const rightX = Math.min(W - leftX - bw, leftX + bw + gap);
-
-    drawBanner(leftX, bannerY, bw, 54, clubs.loko.name, "rgba(200,31,43,.85)");
-    drawBanner(rightX, bannerY, bw, 54, clubs.spartak.name, "rgba(255,255,255,.85)", "rgba(200,31,43,.95)");
+    ctx.fillRect(0, stands.h - 20, W, 2);
   }
 
   function drawGoal(cx, cy, scale=1.0){
@@ -603,17 +586,17 @@ APP_JS = r"""
     ctx.translate(cx, cy);
     ctx.scale(scale, scale);
 
-    ctx.globalAlpha = 0.18;
+    ctx.globalAlpha = 0.16;
     ctx.fillStyle = "#000";
     ctx.beginPath();
-    ctx.ellipse(0, 28, 66, 10, 0, 0, Math.PI*2);
+    ctx.ellipse(0, 28, 60, 10, 0, 0, Math.PI*2);
     ctx.fill();
     ctx.globalAlpha = 1;
 
     ctx.save();
     ctx.strokeStyle = "rgba(120,140,160,.35)";
     ctx.lineWidth = 1;
-    for (let x=-48; x<=48; x+=10){
+    for (let x=-44; x<=44; x+=10){
       ctx.beginPath();
       ctx.moveTo(x, -10);
       ctx.lineTo(x-10, 30);
@@ -621,8 +604,8 @@ APP_JS = r"""
     }
     for (let y=-10; y<=30; y+=8){
       ctx.beginPath();
-      ctx.moveTo(-48, y);
-      ctx.lineTo(48, y);
+      ctx.moveTo(-44, y);
+      ctx.lineTo(44, y);
       ctx.stroke();
     }
     ctx.restore();
@@ -631,69 +614,10 @@ APP_JS = r"""
     ctx.lineWidth = 6;
     ctx.lineCap = "round";
     ctx.beginPath();
-    ctx.moveTo(-52, 22);
-    ctx.lineTo(-52, -12);
-    ctx.lineTo( 52, -12);
-    ctx.lineTo( 52, 22);
-    ctx.stroke();
-
-    ctx.strokeStyle = "rgba(220,40,40,.75)";
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.moveTo(-52, 22); ctx.lineTo(-68, 36);
-    ctx.moveTo( 52, 22); ctx.lineTo( 68, 36);
-    ctx.stroke();
-
-    ctx.restore();
-  }
-
-  function drawGoalie(side, t){
-    const g = (side === "left") ? goalies.left : goalies.right;
-    const gx = (side === "left") ? goals.left.x : goals.right.x;
-    const gy0 = (side === "left") ? goals.left.y : goals.right.y;
-
-    const sway = Math.sin(t*1.1 + g.phase) * (isMobileNow() ? 20 : 26);
-    g.y = gy0 + sway;
-
-    ctx.save();
-    ctx.translate(gx, g.y);
-
-    const offsetX = (side === "left") ? 18 : -18;
-    ctx.translate(offsetX, 18);
-
-    ctx.globalAlpha = 0.22;
-    ctx.beginPath();
-    ctx.ellipse(0, 48, 26, 8, 0, 0, Math.PI*2);
-    ctx.fillStyle = "#000";
-    ctx.fill();
-    ctx.globalAlpha = 1;
-
-    ctx.fillStyle = "rgba(240,240,245,.92)";
-    roundedRectPath(-14, 0, 28, 30, 10);
-    ctx.fill();
-
-    ctx.fillStyle = "rgba(30,30,40,.92)";
-    ctx.beginPath();
-    ctx.arc(0, -8, 10, 0, Math.PI*2);
-    ctx.fill();
-
-    ctx.fillStyle = "rgba(220,220,235,.95)";
-    roundedRectPath(-18, 26, 14, 24, 7);
-    ctx.fill();
-    roundedRectPath(4, 26, 14, 24, 7);
-    ctx.fill();
-
-    ctx.strokeStyle = "rgba(90,60,25,.92)";
-    ctx.lineWidth = 5;
-    ctx.beginPath();
-    ctx.moveTo(-10, 18);
-    ctx.lineTo(-22, 44);
-    ctx.stroke();
-    ctx.strokeStyle = "rgba(30,30,30,.9)";
-    ctx.lineWidth = 7;
-    ctx.beginPath();
-    ctx.moveTo(-22, 44);
-    ctx.lineTo(-4, 44);
+    ctx.moveTo(-48, 22);
+    ctx.lineTo(-48, -12);
+    ctx.lineTo( 48, -12);
+    ctx.lineTo( 48, 22);
     ctx.stroke();
 
     ctx.restore();
@@ -701,40 +625,24 @@ APP_JS = r"""
 
   function drawEmblem(cx, cy, r, club){
     const logo = (club === clubs.loko) ? state.logos.loko : state.logos.spartak;
-    if (logo){
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(cx, cy, r, 0, Math.PI*2);
-      ctx.clip();
-      const iw = logo.width, ih = logo.height;
-      const side = Math.min(iw, ih);
-      const sx = (iw - side) / 2;
-      const sy = (ih - side) / 2;
-      ctx.drawImage(logo, sx, sy, side, side, cx - r, cy - r, r*2, r*2);
-      ctx.restore();
-
-      ctx.beginPath();
-      ctx.arc(cx, cy, r, 0, Math.PI*2);
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = "rgba(0,0,0,.25)";
-      ctx.stroke();
-      return;
-    }
+    if (!logo) return;
 
     ctx.save();
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI*2);
-    ctx.fillStyle = "rgba(10,10,10,.25)";
-    ctx.fill();
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = club.secondary === "#f7f7f7" ? "rgba(200,31,43,.95)" : "rgba(255,255,255,.85)";
-    ctx.stroke();
-    ctx.font = "900 12px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial";
-    ctx.fillStyle = club.secondary === "#f7f7f7" ? "rgba(200,31,43,.95)" : "rgba(255,255,255,.92)";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(club.short, cx, cy+0.5);
+    ctx.clip();
+    const iw = logo.width, ih = logo.height;
+    const side = Math.min(iw, ih);
+    const sx = (iw - side) / 2;
+    const sy = (ih - side) / 2;
+    ctx.drawImage(logo, sx, sy, side, side, cx - r, cy - r, r*2, r*2);
     ctx.restore();
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI*2);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "rgba(0,0,0,.25)";
+    ctx.stroke();
   }
 
   function drawFaceOnHead(faceImg){
@@ -762,7 +670,7 @@ APP_JS = r"""
   }
 
   function getStickBladeWorld(p, tSec){
-    const bob = Math.sin(tSec*2.2 + p.phase) * 2.2;
+    const bob = Math.sin(tSec*2.2 + p.phase) * 2.0;
     const x = p.x;
     const y = p.baseY + bob;
     const ahead = 72 * p.scale * p.dir;
@@ -779,14 +687,13 @@ APP_JS = r"""
 
     const shooter = players[Math.random() < 0.5 ? 0 : 1];
     const target = (shooter.dir === 1) ? goals.right : goals.left;
-    const goalie = (shooter.dir === 1) ? goalies.right : goalies.left;
 
     const spawn = getStickBladeWorld(shooter, tSec);
 
     const ty = target.y + (Math.random()*120 - 60);
     const tx = target.x + (shooter.dir === 1 ? -6 : 6);
 
-    const speed = (isMobileNow() ? 780 : 860) + Math.random()*(isMobileNow() ? 280 : 320);
+    const speed = 740 + Math.random()*260;
     const dx = (tx - spawn.x);
     const dy = (ty - spawn.y);
     const len = Math.max(1, Math.hypot(dx, dy));
@@ -797,14 +704,13 @@ APP_JS = r"""
     puck.vx = dx / len * speed;
     puck.vy = dy / len * speed;
     puck.shooter = shooter;
-    puck.ttl = 2.2;
+    puck.ttl = 2.0;
     puck.trail = [];
 
     shooter.shootKick = 0.35;
-    goalie.skill = 0.48 + Math.random()*0.18;
 
     state.lastShotAt = tSec;
-    state.nextShotIn = (isMobileNow() ? 2.2 : 2.0) + Math.random()*(isMobileNow() ? 2.8 : 2.6);
+    state.nextShotIn = 2.0 + Math.random()*2.6;
   }
 
   function updatePuck(dt){
@@ -817,7 +723,7 @@ APP_JS = r"""
       return;
     }
 
-    const TRAIL_MAX = isMobileNow() ? 10 : 18;
+    const TRAIL_MAX = 10;
     puck.trail.push({x: puck.x, y: puck.y});
     if (puck.trail.length > TRAIL_MAX) puck.trail.shift();
 
@@ -833,52 +739,10 @@ APP_JS = r"""
     if (puck.y < top){ puck.y = top; puck.vy = Math.abs(puck.vy) * 0.85; }
     if (puck.y > bottom){ puck.y = bottom; puck.vy = -Math.abs(puck.vy) * 0.85; }
 
-    checkGoalOrSave("left");
-    checkGoalOrSave("right");
-
-    if (puck.x < rink.x - 240 || puck.x > rink.x + rink.w + 240){
-      puck.active = false;
-      puck.trail = [];
+    // голы (упрощённо)
+    if (puck.x < rink.x + 40 || puck.x > rink.x + rink.w - 40){
+      goalScored(puck.shooter.club.key);
     }
-  }
-
-  function checkGoalOrSave(side){
-    if (!puck.active) return;
-
-    const gpos = (side === "left") ? goals.left : goals.right;
-    const goalie = (side === "left") ? goalies.left : goalies.right;
-
-    const gx = gpos.x;
-    const gy = goalie.y;
-    const mh = goals.mouth.h;
-
-    const nearX = (side === "left")
-      ? (puck.x <= gx + 18 && puck.x >= gx - 26)
-      : (puck.x >= gx - 18 && puck.x <= gx + 26);
-
-    if (!nearX) return;
-
-    const inY = Math.abs(puck.y - gy) <= mh/2;
-    if (!inY){
-      puck.vx *= -0.55;
-      puck.vy = (Math.random()*2 - 1) * 260;
-      return;
-    }
-
-    const dist = Math.abs(puck.y - gy);
-    const centerBonus = 1.0 - Math.min(1.0, dist / (mh/2));
-    const saveChance = Math.min(0.92, goalie.skill * (0.55 + 0.45*centerBonus));
-
-    if (Math.random() < saveChance){
-      flashAndMessage("СЭЙВ!");
-      const out = (side === "left") ? 1 : -1;
-      puck.vx = Math.abs(puck.vx) * out * (0.65 + Math.random()*0.25);
-      puck.vy = (Math.random()*2 - 1) * 320;
-      puck.ttl = Math.min(puck.ttl, 1.15);
-      return;
-    }
-
-    goalScored(puck.shooter.club.key);
   }
 
   function drawPuck(){
@@ -887,9 +751,9 @@ APP_JS = r"""
     ctx.save();
     for (let i=0;i<puck.trail.length;i++){
       const a = i / puck.trail.length;
-      ctx.globalAlpha = 0.05 + a*0.16;
+      ctx.globalAlpha = 0.05 + a*0.14;
       ctx.beginPath();
-      ctx.arc(puck.trail[i].x, puck.trail[i].y, 3.5 + a*2.5, 0, Math.PI*2);
+      ctx.arc(puck.trail[i].x, puck.trail[i].y, 3.5 + a*2.2, 0, Math.PI*2);
       ctx.fillStyle = "rgba(20,20,30,1)";
       ctx.fill();
     }
@@ -898,151 +762,9 @@ APP_JS = r"""
     ctx.save();
     ctx.globalAlpha = 0.96;
     ctx.beginPath();
-    ctx.arc(puck.x, puck.y, 7.2, 0, Math.PI*2);
+    ctx.arc(puck.x, puck.y, 7.0, 0, Math.PI*2);
     ctx.fillStyle = "rgba(15,15,20,1)";
     ctx.fill();
-
-    ctx.globalAlpha = 0.25;
-    ctx.beginPath();
-    ctx.arc(puck.x-2.2, puck.y-2.2, 2.8, 0, Math.PI*2);
-    ctx.fillStyle = "rgba(255,255,255,1)";
-    ctx.fill();
-    ctx.restore();
-  }
-
-  function drawPlayer(p, t){
-    const bob = Math.sin(t*2.2 + p.phase) * 2.2;
-    const lean = Math.sin(t*1.4 + p.phase) * 0.06;
-    const push = (Math.sin(t*2.8 + p.phase) * 0.5 + 0.5);
-
-    if (p.shootKick > 0) p.shootKick = Math.max(0, p.shootKick - 1/60);
-    const kick = p.shootKick;
-
-    const x = p.x;
-    const y = p.baseY + bob;
-    const faceImg = (p.club === clubs.loko) ? state.faces.loko : state.faces.spartak;
-
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.scale(p.scale * p.dir, p.scale);
-    ctx.rotate(lean - kick*0.10);
-
-    ctx.save();
-    ctx.globalAlpha = 0.22;
-    ctx.beginPath();
-    ctx.ellipse(0, 70, 58, 14, 0, 0, Math.PI*2);
-    ctx.fillStyle = "#000";
-    ctx.fill();
-    ctx.restore();
-
-    ctx.save();
-    ctx.globalAlpha = 0.30;
-    ctx.strokeStyle = "rgba(160,220,255,.40)";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(-54, 76);
-    ctx.lineTo(-10, 76);
-    ctx.stroke();
-    ctx.restore();
-
-    ctx.save();
-    const baseAngle = -0.30;
-    const stickAngle = baseAngle - kick*0.55;
-    ctx.rotate(stickAngle);
-    ctx.translate(36, 36 + kick*8);
-
-    ctx.lineWidth = 7;
-    ctx.strokeStyle = "rgba(90,60,25,.95)";
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(0, 78);
-    ctx.stroke();
-
-    ctx.lineWidth = 11;
-    ctx.strokeStyle = "rgba(30,30,30,.9)";
-    ctx.beginPath();
-    ctx.moveTo(0, 78);
-    ctx.lineTo(42, 78);
-    ctx.stroke();
-    ctx.restore();
-
-    ctx.save();
-    roundedRectPath(-34, -10, 68, 82, 18);
-    ctx.fillStyle = p.club.primary;
-    ctx.fill();
-
-    const hg = ctx.createLinearGradient(-34, -10, 34, 70);
-    hg.addColorStop(0, "rgba(255,255,255,.20)");
-    hg.addColorStop(0.35, "rgba(255,255,255,.06)");
-    hg.addColorStop(1, "rgba(0,0,0,.12)");
-    ctx.fillStyle = hg;
-    ctx.fill();
-
-    if (p.club === clubs.spartak){
-      ctx.fillStyle = "rgba(200,31,43,.95)";
-      ctx.fillRect(-34, 20, 68, 12);
-      ctx.fillRect(-34, 48, 68, 10);
-    } else {
-      ctx.fillStyle = "rgba(255,255,255,.85)";
-      ctx.fillRect(-34, 62, 68, 7);
-    }
-
-    ctx.fillStyle = p.club.secondary;
-    roundedRectPath(-40, -10, 24, 24, 10);
-    ctx.fill();
-    roundedRectPath(16, -10, 24, 24, 10);
-    ctx.fill();
-
-    drawEmblem(0, 28, 16, p.club);
-    ctx.restore();
-
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(0, -28, 24, 0, Math.PI*2);
-    ctx.fillStyle = p.club.secondary;
-    ctx.fill();
-
-    ctx.beginPath();
-    ctx.arc(0, -23, 15, 0, Math.PI*2);
-    ctx.fillStyle = "rgba(255,224,189,.95)";
-    ctx.fill();
-
-    const usedFace = drawFaceOnHead(faceImg);
-    if (!usedFace){
-      ctx.fillStyle = "rgba(20,20,20,.7)";
-      ctx.beginPath();
-      ctx.arc(-5, -25, 1.8, 0, Math.PI*2);
-      ctx.arc( 5, -25, 1.8, 0, Math.PI*2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(0, -18, 2.4, 0, Math.PI);
-      ctx.strokeStyle = "rgba(20,20,20,.55)";
-      ctx.lineWidth = 1.6;
-      ctx.stroke();
-    }
-    ctx.restore();
-
-    ctx.save();
-    ctx.lineWidth = 14;
-    ctx.lineCap = "round";
-    ctx.strokeStyle = p.club.secondary;
-    ctx.beginPath(); ctx.moveTo(-22, 14); ctx.lineTo(-44, 30); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo( 22, 14); ctx.lineTo( 44, 30); ctx.stroke();
-    ctx.restore();
-
-    ctx.save();
-    roundedRectPath(-28, 64-28, 56, 30, 12);
-    ctx.fillStyle = "rgba(20,20,20,.92)";
-    ctx.fill();
-    ctx.restore();
-
-    ctx.save();
-    drawLegAndSkate(-12, 54, -0.05);
-    const pushX = 12 + (push * 10);
-    const pushRot = 0.15 + push * 0.25;
-    drawLegAndSkate(pushX, 54, pushRot);
-    ctx.restore();
-
     ctx.restore();
   }
 
@@ -1066,16 +788,6 @@ APP_JS = r"""
     roundedRectPath(-14, -12, 28, 16, 6);
     ctx.fill();
 
-    ctx.fillStyle = "rgba(240,240,240,.22)";
-    ctx.fillRect(-12, -9, 24, 2);
-
-    ctx.strokeStyle = "rgba(200,200,200,.45)";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(-8, 3); ctx.lineTo(-8, 10);
-    ctx.moveTo( 8, 3); ctx.lineTo( 8, 10);
-    ctx.stroke();
-
     ctx.strokeStyle = "rgba(230,230,230,.95)";
     ctx.lineWidth = 3;
     ctx.beginPath();
@@ -1083,14 +795,125 @@ APP_JS = r"""
     ctx.lineTo( 16, 12);
     ctx.stroke();
 
-    ctx.strokeStyle = "rgba(230,230,230,.75)";
-    ctx.lineWidth = 2;
+    ctx.restore();
+    ctx.restore();
+  }
+
+  function drawPlayer(p, t){
+    const bob = Math.sin(t*2.2 + p.phase) * 2.0;
+    const lean = Math.sin(t*1.4 + p.phase) * 0.06;
+    const push = (Math.sin(t*2.8 + p.phase) * 0.5 + 0.5);
+
+    if (p.shootKick > 0) p.shootKick = Math.max(0, p.shootKick - 1/60);
+    const kick = p.shootKick;
+
+    const x = p.x;
+    const y = p.baseY + bob;
+    const faceImg = (p.club === clubs.loko) ? state.faces.loko : state.faces.spartak;
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(p.scale * p.dir, p.scale);
+    ctx.rotate(lean - kick*0.10);
+
+    // shadow
+    ctx.save();
+    ctx.globalAlpha = 0.22;
     ctx.beginPath();
-    ctx.moveTo(16, 12);
-    ctx.lineTo(18, 11);
+    ctx.ellipse(0, 70, 52, 13, 0, 0, Math.PI*2);
+    ctx.fillStyle = "#000";
+    ctx.fill();
+    ctx.restore();
+
+    // stick
+    ctx.save();
+    const stickAngle = -0.30 - kick*0.55;
+    ctx.rotate(stickAngle);
+    ctx.translate(36, 36 + kick*8);
+
+    ctx.lineWidth = 7;
+    ctx.strokeStyle = "rgba(90,60,25,.95)";
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(0, 78);
     ctx.stroke();
 
+    ctx.lineWidth = 11;
+    ctx.strokeStyle = "rgba(30,30,30,.9)";
+    ctx.beginPath();
+    ctx.moveTo(0, 78);
+    ctx.lineTo(42, 78);
+    ctx.stroke();
     ctx.restore();
+
+    // torso
+    ctx.save();
+    roundedRectPath(-34, -10, 68, 82, 18);
+    ctx.fillStyle = p.club.primary;
+    ctx.fill();
+
+    if (p.club === clubs.spartak){
+      ctx.fillStyle = "rgba(200,31,43,.95)";
+      ctx.fillRect(-34, 20, 68, 12);
+      ctx.fillRect(-34, 48, 68, 10);
+    } else {
+      ctx.fillStyle = "rgba(255,255,255,.85)";
+      ctx.fillRect(-34, 62, 68, 7);
+    }
+
+    drawEmblem(0, 28, 16, p.club);
+    ctx.restore();
+
+    // head
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(0, -28, 24, 0, Math.PI*2);
+    ctx.fillStyle = p.club.secondary;
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.arc(0, -23, 15, 0, Math.PI*2);
+    ctx.fillStyle = "rgba(255,224,189,.95)";
+    ctx.fill();
+
+    const usedFace = drawFaceOnHead(faceImg);
+    if (!usedFace){
+      ctx.fillStyle = "rgba(20,20,20,.7)";
+      ctx.beginPath();
+      ctx.arc(-5, -25, 1.8, 0, Math.PI*2);
+      ctx.arc( 5, -25, 1.8, 0, Math.PI*2);
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // pants
+    ctx.save();
+    roundedRectPath(-28, 64-28, 56, 30, 12);
+    ctx.fillStyle = "rgba(20,20,20,.92)";
+    ctx.fill();
+    ctx.restore();
+
+    // legs + skates (именно катание)
+    ctx.save();
+    drawLegAndSkate(-12, 54, -0.05);
+    const pushX = 12 + (push * 10);
+    const pushRot = 0.15 + push * 0.25;
+    drawLegAndSkate(pushX, 54, pushRot);
+    ctx.restore();
+
+    ctx.restore();
+  }
+
+  function drawCenterMessage(){
+    if (performance.now() > state.msgUntil) return;
+    ctx.save();
+    ctx.font = `900 ${isMobileNow() ? 28 : 40}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "rgba(255,255,255,.90)";
+    ctx.shadowColor = "rgba(0,0,0,.55)";
+    ctx.shadowBlur = 12;
+    ctx.fillText(state.msg, W/2, H*0.60);
     ctx.restore();
   }
 
@@ -1106,19 +929,6 @@ APP_JS = r"""
     ctx.restore();
   }
 
-  function drawCenterMessage(){
-    if (performance.now() > state.msgUntil) return;
-    ctx.save();
-    ctx.font = `900 ${isMobileNow() ? 32 : 40}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillStyle = "rgba(255,255,255,.90)";
-    ctx.shadowColor = "rgba(0,0,0,.55)";
-    ctx.shadowBlur = 12;
-    ctx.fillText(state.msg, W/2, H*0.60);
-    ctx.restore();
-  }
-
   let lastNow = performance.now();
 
   function tick(now){
@@ -1127,8 +937,8 @@ APP_JS = r"""
 
     state.speed = Number(speedSlider.value);
 
-    // только если изменился размер — пересчитываем лэйаут
-    if (resizeCanvasToDisplaySize()){
+    // ресайз только если реально изменилось
+    if (resizeCanvas()){
       layout(true);
     }
 
@@ -1148,15 +958,12 @@ APP_JS = r"""
     drawStands();
     drawIce();
 
-    drawGoal(goals.left.x, goals.left.y, isMobileNow() ? 0.95 : 1.05);
-    drawGoal(goals.right.x, goals.right.y, isMobileNow() ? 0.95 : 1.05);
-
-    drawGoalie("left", t);
-    drawGoalie("right", t);
+    drawGoal(goals.left.x, goals.left.y, 0.95);
+    drawGoal(goals.right.x, goals.right.y, 0.95);
 
     if (state.running){
-      const leftBound = rink.x + Math.max(120, Math.round(rink.w * 0.14));
-      const rightBound = rink.x + rink.w - Math.max(120, Math.round(rink.w * 0.14));
+      const leftBound = rink.x + Math.max(90, Math.round(rink.w * 0.14));
+      const rightBound = rink.x + rink.w - Math.max(90, Math.round(rink.w * 0.14));
 
       for (const p of players){
         p.x += p.vx * p.dir * state.speed * dt;
@@ -1168,6 +975,7 @@ APP_JS = r"""
       updatePuck(dt * state.speed);
     }
 
+    // дальний сначала
     drawPlayer(players[1], t);
     drawPlayer(players[0], t + 0.25);
 
@@ -1192,7 +1000,7 @@ APP_JS = r"""
   loadImage("assets/face_spartak.png", (img) => state.faces.spartak = img);
 
   // старт
-  resizeCanvasToDisplaySize();
+  resizeCanvas();
   layout(false);
   reset();
   requestAnimationFrame(tick);
@@ -1219,7 +1027,7 @@ def main():
             encoding="utf-8",
         )
 
-    print("\nГотово. Исправлено: игроки катаются, моб. лэйаут стабильный, без гигантских спрайтов.")
+    print("\nГотово. Mobile-first: стабильный canvas (visualViewport), уменьшены игроки, каток крупнее, есть cache-bust ?v=...")
 
 if __name__ == "__main__":
     main()

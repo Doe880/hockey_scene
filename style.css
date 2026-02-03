@@ -4,6 +4,11 @@
   --text:#e8eef8;
   --muted:#a7b3c6;
   --border:rgba(255,255,255,.10);
+
+  /* будут выставляться JS-ом */
+  --vh: 1vh;
+  --header-h: 0px;
+  --stage-gap: 18px;
 }
 
 *{box-sizing:border-box}
@@ -78,19 +83,10 @@ body{
   text-align:center;
   box-shadow: 0 10px 25px rgba(0,0,0,.25);
 }
-.score{
-  font-size:22px;
-  font-weight:900;
-  letter-spacing:1px;
-}
-.score-sub{
-  margin-top:2px;
-  font-size:12px;
-  color:var(--muted);
-}
-.scoreboard.flash{
-  animation: flash 420ms ease-in-out 0s 2;
-}
+.score{ font-size:22px; font-weight:900; letter-spacing:1px; }
+.score-sub{ margin-top:2px; font-size:12px; color:var(--muted); }
+
+.scoreboard.flash{ animation: flash 420ms ease-in-out 0s 2; }
 @keyframes flash {
   0%{ transform: translateY(0); filter:brightness(1); }
   50%{ transform: translateY(-1px); filter:brightness(1.35); }
@@ -115,7 +111,6 @@ body{
   border-radius:14px;
   min-width:190px;
 }
-
 .ctrl.row{ min-width:auto; flex-direction:row; align-items:center; gap:10px; }
 
 .lbl{ font-size:12px; color:var(--muted); }
@@ -134,14 +129,17 @@ input[type="range"]{ width: 220px; }
 .btn.ghost{ background:transparent; }
 
 .stage{
-  padding:18px 16px 18px;
+  padding: var(--stage-gap);
   display:flex;
   justify-content:center;
 }
 
+/* Важно: canvas держит 16:9 и ограничен видимой высотой экрана (JS даст --vh и --header-h) */
 canvas#scene{
   width:min(1280px, 96vw);
+  aspect-ratio: 16 / 9;
   height:auto;
+  max-height: calc((var(--vh) * 100) - var(--header-h) - (var(--stage-gap) * 2) - 10px);
   border-radius:18px;
   border:1px solid var(--border);
   background:#07121d;
@@ -149,8 +147,10 @@ canvas#scene{
   touch-action: manipulation;
 }
 
-/* ===== Mobile optimization ===== */
+/* ===== Mobile layout ===== */
 @media (max-width: 720px){
+  :root{ --stage-gap: 12px; }
+
   .topbar{
     flex-direction: column;
     align-items: stretch;
@@ -187,16 +187,10 @@ canvas#scene{
 
   input[type="range"]{ width: 100%; max-width: none; }
 
-  .stage{ padding: 12px 10px 14px; }
+  .stage{ padding: var(--stage-gap); }
 
   canvas#scene{
     width: 100%;
     border-radius: 14px;
   }
-}
-
-@media (max-width: 380px){
-  .team-name{ font-size: 13px; }
-  .team-logo{ width: 24px; height: 24px; }
-  .score{ font-size: 17px; }
 }
