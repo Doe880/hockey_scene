@@ -72,6 +72,7 @@ STYLE_CSS = """
   --muted:#a7b3c6;
   --border:rgba(255,255,255,.10);
 
+  /* будут выставляться JS-ом */
   --vh: 1vh;
   --header-h: 0px;
   --stage-gap: 18px;
@@ -110,8 +111,17 @@ body{
   align-items:center;
 }
 
-.team{ display:flex; flex-direction:column; gap:2px; }
-.team-row{ display:flex; align-items:center; gap:10px; }
+.team{
+  display:flex;
+  flex-direction:column;
+  gap:2px;
+}
+
+.team-row{
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
 
 .team.left{ align-items:flex-start; }
 .team.right{ align-items:flex-end; }
@@ -191,12 +201,12 @@ input[type="range"]{ width: 220px; }
   justify-content:center;
 }
 
-/* canvas держит 16:9, но ограничен реальной видимой высотой */
+/* Важно: canvas держит 16:9 и ограничен видимой высотой экрана (JS даст --vh и --header-h) */
 canvas#scene{
   width:min(1280px, 96vw);
   aspect-ratio: 16 / 9;
   height:auto;
-  max-height: calc((var(--vh) * 100) - var(--header-h) - (var(--stage-gap) * 2) - 8px);
+  max-height: calc((var(--vh) * 100) - var(--header-h) - (var(--stage-gap) * 2) - 10px);
   border-radius:18px;
   border:1px solid var(--border);
   background:#07121d;
@@ -206,7 +216,7 @@ canvas#scene{
 
 /* ===== Mobile layout ===== */
 @media (max-width: 720px){
-  :root{ --stage-gap: 10px; }
+  :root{ --stage-gap: 12px; }
 
   .topbar{
     flex-direction: column;
@@ -268,30 +278,38 @@ APP_JS = r"""
 
   const topbarEl = document.getElementById("topbar");
 
-  let W = 1280, H = 720;
-  let lastCssW = 0, lastCssH = 0;
+  // CSS-координаты
+  let W = 1280;
+  let H = 720;
+  let lastCssW = 0;
+  let lastCssH = 0;
 
-  function isMobileNow(){ return matchMedia("(max-width: 720px)").matches; }
+  function isMobileNow(){
+    return matchMedia("(max-width: 720px)").matches;
+  }
 
+  // === Mobile-first: реальные видимые размеры экрана через visualViewport ===
   function updateViewportVars(){
     const vv = window.visualViewport;
     const vhPx = vv ? vv.height : window.innerHeight;
     const headerH = topbarEl ? Math.round(topbarEl.getBoundingClientRect().height) : 0;
+
     document.documentElement.style.setProperty("--vh", (vhPx * 0.01) + "px");
     document.documentElement.style.setProperty("--header-h", headerH + "px");
   }
 
   function desiredCanvasCssSize(){
+    // ширина — по контейнеру
     const rect = canvas.getBoundingClientRect();
     const cssW = Math.max(320, Math.round(rect.width || window.innerWidth));
 
+    // высота — строгие 16:9, но не больше видимой области
     const headerH = topbarEl ? Math.round(topbarEl.getBoundingClientRect().height) : 0;
     const vv = window.visualViewport;
     const visibleH = vv ? vv.height : window.innerHeight;
 
-    const gap = isMobileNow() ? 18 : 30;
+    const gap = isMobileNow() ? 24 : 36;
     const maxH = Math.max(240, Math.round(visibleH - headerH - gap));
-
     const idealH = Math.round(cssW * 9 / 16);
     const cssH = Math.min(idealH, maxH);
 
@@ -302,8 +320,11 @@ APP_JS = r"""
     updateViewportVars();
 
     const { cssW, cssH } = desiredCanvasCssSize();
-    W = cssW; H = cssH;
 
+    W = cssW;
+    H = cssH;
+
+    // DPR ограничиваем сильнее на мобиле ради стабильности
     const dprLimit = isMobileNow() ? 1.75 : 2;
     const dpr = Math.max(1, Math.min(dprLimit, window.devicePixelRatio || 1));
 
@@ -321,13 +342,21 @@ APP_JS = r"""
     return changed;
   }
 
+  // слушаем “живую” мобильную область (адресная строка/клава)
   if (window.visualViewport){
-    window.visualViewport.addEventListener("resize", () => { if (resizeCanvas()) layout(true); });
-    window.visualViewport.addEventListener("scroll", () => { if (resizeCanvas()) layout(true); });
+    window.visualViewport.addEventListener("resize", () => {
+      if (resizeCanvas()) layout(true);
+    });
+    window.visualViewport.addEventListener("scroll", () => {
+      // иногда высота меняется при скролле
+      if (resizeCanvas()) layout(true);
+    });
   }
-  window.addEventListener("resize", () => { if (resizeCanvas()) layout(true); });
+  window.addEventListener("resize", () => {
+    if (resizeCanvas()) layout(true);
+  });
 
-  function loadImage(url, cb){
+  function loadImage(url, cb) {
     const img = new Image();
     img.onload = () => cb(img);
     img.onerror = () => cb(null);
@@ -335,82 +364,81 @@ APP_JS = r"""
   }
 
   const clubs = {
-    loko: { key:"loko", name:"ЛОКОМОТИВ ЯРОСЛАВЛЬ", short:"ЛЯ", primary:"#c81f2b", secondary:"#1a1a1a" },
-    spartak: { key:"spartak", name:"СПАРТАК ПЯТИГОРСК", short:"СП", primary:"#f7f7f7", secondary:"#c81f2b" }
+    loko: { key: "loko", name: "ЛОКОМОТИВ ЯРОСЛАВЛЬ", short: "ЛЯ", primary: "#c81f2b", secondary: "#1a1a1a" },
+    spartak: { key: "spartak", name: "СПАРТАК ПЯТИГОРСК", short: "СП", primary: "#f7f7f7", secondary: "#c81f2b" }
   };
 
   const state = {
-    running:true,
+    running: true,
     t0: performance.now(),
-    speed:1.0,
-    logos:{ loko:null, spartak:null },
-    faces:{ loko:null, spartak:null },
+    speed: 1.0,
+    logos: { loko: null, spartak: null },
+    faces: { loko: null, spartak: null },
 
-    score:{ loko:0, spartak:0 },
-    period:1,
-    timeLeft:20*60,
+    score: { loko: 0, spartak: 0 },
+    period: 1,
+    timeLeft: 20 * 60,
 
-    lastShotAt:0,
-    nextShotIn:2.2,
+    lastShotAt: 0,
+    nextShotIn: 2.2,
 
-    flashUntil:0,
-    msg:"",
-    msgUntil:0
+    flashUntil: 0,
+    msg: "",
+    msgUntil: 0
   };
 
-  // Layout
-  let rink=null, stands=null, goals=null;
+  // Layout-dependent
+  let rink = null;
+  let stands = null;
+  let goals = null;
 
   const goalies = {
-    left:  { phase: 0.0, y: 0 },
-    right: { phase: 1.2, y: 0 }
+    left:  { side: "left",  phase: 0.0, skill: 0.52, y: 0 },
+    right: { side: "right", phase: 1.2, skill: 0.52, y: 0 }
   };
 
-  // Мобильная шкала — аккуратная, но каток будет большой
+  // Mobile приоритет: scaleMobile заметно меньше
   const players = [
-    { club:clubs.loko,    fracX:0.22, fracY:0.74, phase:0.0, scaleMobile:0.82, vxMobile:190, dir:1,  shootKick:0, x:0, baseY:0, scale:0.82, vx:190 },
-    { club:clubs.spartak, fracX:0.60, fracY:0.48, phase:1.7, scaleMobile:0.78, vxMobile:180, dir:-1, shootKick:0, x:0, baseY:0, scale:0.78, vx:180 }
+    { club: clubs.loko,    fracX: 0.22, fracY: 0.72, phase: 0.0, scaleDesktop: 1.20, scaleMobile: 0.82, vxDesktop: 240, vxMobile: 180, dir: 1,  shootKick: 0, x: 0, baseY: 0, scale: 1.0, vx: 200 },
+    { club: clubs.spartak, fracX: 0.58, fracY: 0.46, phase: 1.7, scaleDesktop: 1.12, scaleMobile: 0.78, vxDesktop: 220, vxMobile: 170, dir: -1, shootKick: 0, x: 0, baseY: 0, scale: 1.0, vx: 190 }
   ];
 
-  const puck = { active:false, x:0, y:0, vx:0, vy:0, shooter:null, ttl:0, trail:[] };
+  const puck = { active: false, x: 0, y: 0, vx: 0, vy: 0, shooter: null, ttl: 0, trail: [] };
 
   function layout(rescale){
     const oldRink = rink ? { ...rink } : null;
 
-    // === ВАЖНО: УВЕЛИЧИВАЕМ КАТОК НА МОБИЛЕ ===
-    // уменьшаем stands и topY, даём катку до ~86% высоты canvas
-    const marginX = Math.max(10, Math.round(W * 0.035));
-    const standsH = Math.max(70, Math.round(H * 0.12)); // трибуны компактнее
-    const topY = standsH + Math.max(8, Math.round(H * 0.015));
-
-    const bottomPad = Math.max(10, Math.round(H * 0.02));
-    const rinkH = Math.max(220, Math.round(H - topY - bottomPad));
+    // Mobile-first: каток максимально крупный
+    const marginX = Math.max(14, Math.round(W * 0.045));
+    const topY = Math.max(Math.round(H * 0.18), 78);
+    const rinkH = Math.min(Math.round(H * 0.72), H - topY - 18);
 
     rink = {
       x: marginX,
       y: topY,
       w: W - marginX*2,
       h: rinkH,
-      r: Math.max(28, Math.round(Math.min(W, H) * 0.07)),
+      r: Math.max(32, Math.round(Math.min(W, H) * 0.075)),
     };
 
-    stands = { x:0, y:0, w:W, h: standsH };
+    stands = { x: 0, y: 0, w: W, h: Math.max(110, Math.round(topY * 0.95)) };
 
     goals = {
-      left:  { x: rink.x + Math.max(56, Math.round(rink.w*0.10)), y: rink.y + rink.h/2 },
-      right: { x: rink.x + rink.w - Math.max(56, Math.round(rink.w*0.10)), y: rink.y + rink.h/2 },
-      mouth: { w: Math.max(86, Math.round(rink.w*0.10)), h: Math.max(58, Math.round(rink.h*0.16)) }
+      left:  { x: rink.x + Math.max(60, Math.round(rink.w*0.10)), y: rink.y + rink.h/2 },
+      right: { x: rink.x + rink.w - Math.max(60, Math.round(rink.w*0.10)), y: rink.y + rink.h/2 },
+      mouth: { w: Math.max(86, Math.round(rink.w * 0.10)), h: Math.max(58, Math.round(rink.h * 0.16)) }
     };
 
     goalies.left.y = goals.left.y;
     goalies.right.y = goals.right.y;
 
+    const mob = isMobileNow();
     for (const p of players){
-      p.scale = p.scaleMobile;
-      p.vx = p.vxMobile;
+      p.scale = mob ? p.scaleMobile : p.scaleDesktop;
+      p.vx = mob ? p.vxMobile : p.vxDesktop;
     }
 
-    // при ресайзе переносим позиции пропорционально
+    // Не телепортируем при ресайзе — переносим пропорционально
     if (rescale && oldRink){
       for (const p of players){
         const fx = (p.x - oldRink.x) / Math.max(1, oldRink.w);
@@ -437,17 +465,21 @@ APP_JS = r"""
       p.baseY = rink.y + rink.h * p.fracY;
       p.shootKick = 0;
     }
+
     state.score.loko = 0;
     state.score.spartak = 0;
     state.period = 1;
-    state.timeLeft = 20*60;
+    state.timeLeft = 20 * 60;
+
     state.lastShotAt = 0;
     state.nextShotIn = 2.2;
     state.flashUntil = 0;
     state.msg = "";
     state.msgUntil = 0;
+
     puck.active = false;
     puck.trail = [];
+
     state.t0 = performance.now();
     updateScoreboard(true);
   }
@@ -457,6 +489,7 @@ APP_JS = r"""
     const mm = Math.floor(state.timeLeft / 60);
     const ss = Math.floor(state.timeLeft % 60);
     scoreSubEl.textContent = `${state.period} период • ${mm}:${String(ss).padStart(2,"0")}`;
+
     if (force) return;
     if (performance.now() < state.flashUntil) scoreboardEl.classList.add("flash");
     else scoreboardEl.classList.remove("flash");
@@ -478,7 +511,7 @@ APP_JS = r"""
     updateScoreboard();
   }
 
-  function roundedRectPath(x,y,w,h,r){
+  function roundedRectPath(x, y, w, h, r){
     const rr = Math.min(r, w/2, h/2);
     ctx.beginPath();
     ctx.moveTo(x+rr, y);
@@ -489,39 +522,13 @@ APP_JS = r"""
     ctx.closePath();
   }
 
-  function drawStands(){
-    const g = ctx.createLinearGradient(0, 0, 0, stands.h);
-    g.addColorStop(0, "#0a0f18");
-    g.addColorStop(1, "#0b1928");
-    ctx.fillStyle = g;
-    ctx.fillRect(stands.x, stands.y, stands.w, stands.h);
-
-    // легкая толпа
-    ctx.save();
-    ctx.globalAlpha = 0.65;
-    const dots = 420;
-    const stepX = 18;
-    for (let i=0;i<dots;i++){
-      const x = (i*stepX) % W;
-      const y = (Math.floor(i*stepX / W) * 10) + 12;
-      if (y > stands.h - 12) break;
-      const v = (i*37) % 100;
-      ctx.fillStyle = v < 33 ? "rgba(240,240,255,.35)" : v < 66 ? "rgba(255,120,120,.25)" : "rgba(120,200,255,.22)";
-      ctx.fillRect(x + (v%7), y + (v%3), 2, 2);
-    }
-    ctx.restore();
-
-    ctx.fillStyle = "rgba(255,255,255,.10)";
-    ctx.fillRect(0, stands.h - 10, W, 2);
-  }
-
   function drawIce(){
     roundedRectPath(rink.x, rink.y, rink.w, rink.h, rink.r);
     ctx.fillStyle = "#eaf6ff";
     ctx.fill();
 
     const g = ctx.createLinearGradient(0, rink.y, 0, rink.y + rink.h);
-    g.addColorStop(0, "rgba(140,200,255,.14)");
+    g.addColorStop(0, "rgba(140,200,255,.16)");
     g.addColorStop(1, "rgba(20,60,110,.10)");
     ctx.fillStyle = g;
     ctx.fill();
@@ -530,7 +537,6 @@ APP_JS = r"""
     ctx.strokeStyle = "#1d3a56";
     ctx.stroke();
 
-    // линии
     ctx.beginPath();
     ctx.moveTo(rink.x, rink.y + rink.h/2);
     ctx.lineTo(rink.x + rink.w, rink.y + rink.h/2);
@@ -538,7 +544,7 @@ APP_JS = r"""
     ctx.strokeStyle = "rgba(200,40,40,.55)";
     ctx.stroke();
 
-    for (const k of [0.33, 0.67]){
+    for(const k of [0.33, 0.67]){
       const xx = rink.x + rink.w * k;
       ctx.beginPath();
       ctx.moveTo(xx, rink.y);
@@ -547,6 +553,32 @@ APP_JS = r"""
       ctx.strokeStyle = "rgba(40,120,220,.50)";
       ctx.stroke();
     }
+  }
+
+  function drawStands(){
+    const g = ctx.createLinearGradient(0, 0, 0, stands.h);
+    g.addColorStop(0, "#0a0f18");
+    g.addColorStop(1, "#0b1928");
+    ctx.fillStyle = g;
+    ctx.fillRect(stands.x, stands.y, stands.w, stands.h);
+
+    const dots = 700; // мобильно и легко
+    const stepX = 19;
+
+    ctx.save();
+    ctx.globalAlpha = 0.75;
+    for(let i=0;i<dots;i++){
+      const x = (i*stepX) % W;
+      const y = (Math.floor(i*stepX / W) * 10) + 28;
+      if (y > stands.h - 22) break;
+      const v = (i*37) % 100;
+      ctx.fillStyle = v < 33 ? "rgba(240,240,255,.35)" : v < 66 ? "rgba(255,120,120,.25)" : "rgba(120,200,255,.22)";
+      ctx.fillRect(x + (v%7), y + (v%3), 2, 2);
+    }
+    ctx.restore();
+
+    ctx.fillStyle = "rgba(255,255,255,.10)";
+    ctx.fillRect(0, stands.h - 20, W, 2);
   }
 
   function drawGoal(cx, cy, scale=1.0){
@@ -561,7 +593,6 @@ APP_JS = r"""
     ctx.fill();
     ctx.globalAlpha = 1;
 
-    // сетка
     ctx.save();
     ctx.strokeStyle = "rgba(120,140,160,.35)";
     ctx.lineWidth = 1;
@@ -579,7 +610,6 @@ APP_JS = r"""
     }
     ctx.restore();
 
-    // рама
     ctx.strokeStyle = "rgba(220,40,40,.95)";
     ctx.lineWidth = 6;
     ctx.lineCap = "round";
@@ -593,66 +623,10 @@ APP_JS = r"""
     ctx.restore();
   }
 
-  function drawGoalie(side, t){
-    const g = (side === "left") ? goalies.left : goalies.right;
-    const gx = (side === "left") ? goals.left.x : goals.right.x;
-    const gy0 = (side === "left") ? goals.left.y : goals.right.y;
-
-    const sway = Math.sin(t*1.1 + g.phase) * 16; // мобильно спокойнее
-    g.y = gy0 + sway;
-
-    ctx.save();
-    ctx.translate(gx, g.y);
-
-    const offsetX = (side === "left") ? 16 : -16;
-    ctx.translate(offsetX, 18);
-
-    // тень
-    ctx.globalAlpha = 0.22;
-    ctx.beginPath();
-    ctx.ellipse(0, 48, 24, 7, 0, 0, Math.PI*2);
-    ctx.fillStyle = "#000";
-    ctx.fill();
-    ctx.globalAlpha = 1;
-
-    // тело
-    ctx.fillStyle = "rgba(240,240,245,.92)";
-    roundedRectPath(-14, 0, 28, 30, 10);
-    ctx.fill();
-
-    // голова/шлем
-    ctx.fillStyle = "rgba(30,30,40,.92)";
-    ctx.beginPath();
-    ctx.arc(0, -8, 10, 0, Math.PI*2);
-    ctx.fill();
-
-    // щитки
-    ctx.fillStyle = "rgba(220,220,235,.95)";
-    roundedRectPath(-18, 26, 14, 24, 7);
-    ctx.fill();
-    roundedRectPath(4, 26, 14, 24, 7);
-    ctx.fill();
-
-    // клюшка
-    ctx.strokeStyle = "rgba(90,60,25,.92)";
-    ctx.lineWidth = 5;
-    ctx.beginPath();
-    ctx.moveTo(-10, 18);
-    ctx.lineTo(-22, 44);
-    ctx.stroke();
-    ctx.strokeStyle = "rgba(30,30,30,.9)";
-    ctx.lineWidth = 7;
-    ctx.beginPath();
-    ctx.moveTo(-22, 44);
-    ctx.lineTo(-4, 44);
-    ctx.stroke();
-
-    ctx.restore();
-  }
-
   function drawEmblem(cx, cy, r, club){
     const logo = (club === clubs.loko) ? state.logos.loko : state.logos.spartak;
     if (!logo) return;
+
     ctx.save();
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI*2);
@@ -673,15 +647,18 @@ APP_JS = r"""
 
   function drawFaceOnHead(faceImg){
     if (!faceImg) return false;
+
     ctx.save();
     ctx.beginPath();
     ctx.arc(0, -23, 15, 0, Math.PI*2);
     ctx.clip();
+
     const iw = faceImg.width, ih = faceImg.height;
     const side = Math.min(iw, ih);
     const sx = (iw - side) / 2;
     const sy = (ih - side) / 2;
     ctx.drawImage(faceImg, sx, sy, side, side, -15, -38, 30, 30);
+
     ctx.restore();
 
     ctx.beginPath();
@@ -697,29 +674,33 @@ APP_JS = r"""
     const x = p.x;
     const y = p.baseY + bob;
     const ahead = 72 * p.scale * p.dir;
-    const down  = 70 * p.scale;
+    const down = 70 * p.scale;
     return { x: x + ahead, y: y + down };
   }
 
   function maybeShoot(tSec){
     if (puck.active) return;
     if (state.lastShotAt === 0) state.lastShotAt = tSec;
+
     const since = tSec - state.lastShotAt;
     if (since < state.nextShotIn) return;
 
     const shooter = players[Math.random() < 0.5 ? 0 : 1];
     const target = (shooter.dir === 1) ? goals.right : goals.left;
+
     const spawn = getStickBladeWorld(shooter, tSec);
 
     const ty = target.y + (Math.random()*120 - 60);
     const tx = target.x + (shooter.dir === 1 ? -6 : 6);
 
     const speed = 740 + Math.random()*260;
-    const dx = tx - spawn.x, dy = ty - spawn.y;
+    const dx = (tx - spawn.x);
+    const dy = (ty - spawn.y);
     const len = Math.max(1, Math.hypot(dx, dy));
 
     puck.active = true;
-    puck.x = spawn.x; puck.y = spawn.y;
+    puck.x = spawn.x;
+    puck.y = spawn.y;
     puck.vx = dx / len * speed;
     puck.vy = dy / len * speed;
     puck.shooter = shooter;
@@ -743,7 +724,7 @@ APP_JS = r"""
     }
 
     const TRAIL_MAX = 10;
-    puck.trail.push({x:puck.x, y:puck.y});
+    puck.trail.push({x: puck.x, y: puck.y});
     if (puck.trail.length > TRAIL_MAX) puck.trail.shift();
 
     puck.x += puck.vx * dt;
@@ -758,8 +739,8 @@ APP_JS = r"""
     if (puck.y < top){ puck.y = top; puck.vy = Math.abs(puck.vy) * 0.85; }
     if (puck.y > bottom){ puck.y = bottom; puck.vy = -Math.abs(puck.vy) * 0.85; }
 
-    // Простая фиксация гола (в следующем шаге сделаем реалистично с сейвами)
-    if (puck.x < rink.x + 36 || puck.x > rink.x + rink.w - 36){
+    // голы (упрощённо)
+    if (puck.x < rink.x + 40 || puck.x > rink.x + rink.w - 40){
       goalScored(puck.shooter.club.key);
     }
   }
@@ -912,7 +893,7 @@ APP_JS = r"""
     ctx.fill();
     ctx.restore();
 
-    // legs + skates
+    // legs + skates (именно катание)
     ctx.save();
     drawLegAndSkate(-12, 54, -0.05);
     const pushX = 12 + (push * 10);
@@ -926,7 +907,7 @@ APP_JS = r"""
   function drawCenterMessage(){
     if (performance.now() > state.msgUntil) return;
     ctx.save();
-    ctx.font = `900 28px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
+    ctx.font = `900 ${isMobileNow() ? 28 : 40}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillStyle = "rgba(255,255,255,.90)";
@@ -956,6 +937,7 @@ APP_JS = r"""
 
     state.speed = Number(speedSlider.value);
 
+    // ресайз только если реально изменилось
     if (resizeCanvas()){
       layout(true);
     }
@@ -965,7 +947,7 @@ APP_JS = r"""
       if (state.timeLeft <= 0){
         state.period += 1;
         if (state.period > 3) state.period = 1;
-        state.timeLeft = 20*60;
+        state.timeLeft = 20 * 60;
       }
     }
 
@@ -976,15 +958,12 @@ APP_JS = r"""
     drawStands();
     drawIce();
 
-    // ворота и вратари — ВОЗВРАЩЕНЫ
     drawGoal(goals.left.x, goals.left.y, 0.95);
     drawGoal(goals.right.x, goals.right.y, 0.95);
-    drawGoalie("left", t);
-    drawGoalie("right", t);
 
     if (state.running){
-      const leftBound = rink.x + Math.max(80, Math.round(rink.w * 0.12));
-      const rightBound = rink.x + rink.w - Math.max(80, Math.round(rink.w * 0.12));
+      const leftBound = rink.x + Math.max(90, Math.round(rink.w * 0.14));
+      const rightBound = rink.x + rink.w - Math.max(90, Math.round(rink.w * 0.14));
 
       for (const p of players){
         p.x += p.vx * p.dir * state.speed * dt;
@@ -996,6 +975,7 @@ APP_JS = r"""
       updatePuck(dt * state.speed);
     }
 
+    // дальний сначала
     drawPlayer(players[1], t);
     drawPlayer(players[0], t + 0.25);
 
@@ -1028,26 +1008,26 @@ APP_JS = r"""
 """
 
 def write(path: Path, content: str):
-  path.write_text(content, encoding="utf-8")
-  print(f"✓ wrote {path}")
+    path.write_text(content, encoding="utf-8")
+    print(f"✓ wrote {path}")
 
 def main():
-  write(OUT_DIR / "index.html", INDEX_HTML)
-  write(OUT_DIR / "style.css", STYLE_CSS)
-  write(OUT_DIR / "app.js", APP_JS)
+    write(OUT_DIR / "index.html", INDEX_HTML)
+    write(OUT_DIR / "style.css", STYLE_CSS)
+    write(OUT_DIR / "app.js", APP_JS)
 
-  readme = OUT_DIR / "assets" / "README.txt"
-  if not readme.exists():
-    readme.write_text(
-      "Положи сюда файлы:\n"
-      "  loko.png\n"
-      "  spartak.png\n"
-      "  face_loko.png\n"
-      "  face_spartak.png\n",
-      encoding="utf-8",
-    )
+    readme = OUT_DIR / "assets" / "README.txt"
+    if not readme.exists():
+        readme.write_text(
+            "Положи сюда файлы:\n"
+            "  loko.png\n"
+            "  spartak.png\n"
+            "  face_loko.png\n"
+            "  face_spartak.png\n",
+            encoding="utf-8",
+        )
 
-  print("\nГотово. Мобильный каток увеличен (трибуны ниже, каток выше). Вратари возвращены.")
+    print("\nГотово. Mobile-first: стабильный canvas (visualViewport), уменьшены игроки, каток крупнее, есть cache-bust ?v=...")
 
 if __name__ == "__main__":
-  main()
+    main()
