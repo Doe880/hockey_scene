@@ -100,7 +100,7 @@
 
     flashUntil:0,
     msg:"",
-    msgUntil:0
+     msgUntil:0
   };
 
   // Layout
@@ -127,9 +127,13 @@
     const marginX = Math.max(10, Math.round(W * 0.035));
     const standsH = Math.max(70, Math.round(H * 0.12)); // трибуны компактнее
     const topY = standsH + Math.max(8, Math.round(H * 0.015));
+    const standsH = Math.min(100, Math.max(48, Math.round(H * 0.12))); // трибуны компактнее
+    const topY = standsH + Math.max(6, Math.round(H * 0.012));
 
     const bottomPad = Math.max(10, Math.round(H * 0.02));
     const rinkH = Math.max(220, Math.round(H - topY - bottomPad));
+    const bottomPad = Math.max(8, Math.round(H * 0.02));
+    const rinkH = Math.max(0, Math.round(H - topY - bottomPad));
 
     rink = {
       x: marginX,
@@ -154,6 +158,7 @@
       p.scale = p.scaleMobile;
       p.vx = p.vxMobile;
     }
+
 
     // при ресайзе переносим позиции пропорционально
     if (rescale && oldRink){
