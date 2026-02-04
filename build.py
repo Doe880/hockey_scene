@@ -243,16 +243,21 @@ APP_JS = r"""
     bottom: { x:0, baseX:0, y:0 }
   };
 
-  // Игроки стоят на красной линии по центру (слегка разнесены по X)
+  // Игроки стоят на центральной красной линии (строго центр)
   const players = [
-    { id:0, club:clubs.loko,    scale:0.84, x:0, y:0, dir:1, shootKick:0 },
+    { id:0, club:clubs.loko,    scale:0.84, x:0, y:0, dir:1,  shootKick:0 },
     { id:1, club:clubs.spartak, scale:0.80, x:0, y:0, dir:-1, shootKick:0 }
   ];
 
   // Шайба + lastTouch (кто бил)
-  const puck = { x:0, y:0, vx:0, vy:0, owner:null, ttl:999, trail:[], lastTouch:"loko" };
+  const puck = {
+    x:0, y:0, vx:0, vy:0,
+    owner:null, ttl:999,
+    trail:[],
+    lastTouch:"loko",
+    justBouncedUntil: 0, // анти-дребезг для ударов о вратаря
+  };
 
-  // Управление свайпом
   const touch = {
     active:false, id:null,
     startX:0, startY:0,
@@ -262,7 +267,7 @@ APP_JS = r"""
   };
 
   const MOVE_THRESHOLD = 18;
-  const SHOT_THRESHOLD = 70; // короче порог, т.к. теперь нет катания — свайп проще
+  const SHOT_THRESHOLD = 70;
 
   function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
   function dist(ax,ay,bx,by){ return Math.hypot(ax-bx, ay-by); }
@@ -270,8 +275,8 @@ APP_JS = r"""
 
   function flashMessage(text){
     state.msg = text;
-    state.msgUntil = performance.now() + 850;
-    state.flashUntil = performance.now() + 700;
+    state.msgUntil = performance.now() + 700;
+    state.flashUntil = performance.now() + 550;
   }
 
   function updateScoreboard(force=false){
@@ -321,11 +326,16 @@ APP_JS = r"""
     goalies.top.x = centerX;
     goalies.bottom.x = centerX;
 
-    // игроки на центральной красной линии
-    const centerY = rink.y + rink.h * 0.50;
-    players[0].x = centerX - rink.w * 0.12; // loko левее
+    // === СТРОГО центр красной линии ===
+    const centerY = rink.y + (rink.h / 2);
+
+    // расстояние между игроками
+    const spread = rink.w * 0.22; // было 0.12 — теперь заметно дальше
+
+    players[0].x = centerX - spread;
     players[0].y = centerY;
-    players[1].x = centerX + rink.w * 0.12; // spartak правее
+
+    players[1].x = centerX + spread;
     players[1].y = centerY;
 
     // шайба у выбранного игрока
@@ -407,24 +417,37 @@ APP_JS = r"""
     ctx.strokeStyle = "#1d3a56";
     ctx.stroke();
 
-    // центральная красная линия (горизонтальная)
-    ctx.beginPath();
-    ctx.moveTo(rink.x, rink.y + rink.h/2);
-    ctx.lineTo(rink.x + rink.w, rink.y + rink.h/2);
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = "rgba(200,40,40,.55)";
-    ctx.stroke();
-
+    // зоны (синие линии — более лёгкие, чтобы красная была очевидной)
     for (const k of [0.33, 0.67]){
       const yy = rink.y + rink.h * k;
       ctx.beginPath();
       ctx.moveTo(rink.x, yy);
       ctx.lineTo(rink.x + rink.w, yy);
       ctx.lineWidth = 3;
-      ctx.strokeStyle = "rgba(40,120,220,.50)";
+      ctx.strokeStyle = "rgba(40,120,220,.35)";
       ctx.stroke();
     }
 
+    // центральная красная линия (чётче/ярче)
+    const cy = rink.y + rink.h/2;
+    ctx.beginPath();
+    ctx.moveTo(rink.x, cy);
+    ctx.lineTo(rink.x + rink.w, cy);
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = "rgba(220,45,45,.75)";
+    ctx.stroke();
+
+    // небольшой центр-круг, чтобы визуально было понятно “центр”
+    ctx.save();
+    ctx.globalAlpha = 0.18;
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(220,45,45,.9)";
+    ctx.beginPath();
+    ctx.arc(rink.x + rink.w/2, cy, Math.max(32, rink.w*0.08), 0, Math.PI*2);
+    ctx.stroke();
+    ctx.restore();
+
+    // гол-линии
     ctx.lineWidth = 3;
     ctx.strokeStyle = "rgba(200,40,40,.35)";
     ctx.beginPath();
@@ -666,37 +689,34 @@ APP_JS = r"""
     puck.ttl = 999;
   }
 
-  // ВАЖНО: цели поменяли!
+  // Цели:
   // loko -> нижние ворота
   // spartak -> верхние ворота
   function shootBySwipe(fromPlayer, sx, sy, ex, ey){
     if (puck.owner !== fromPlayer) return;
 
-    const dx = ex - sx;
-    const dy = ey - sy;
-    const distSwipe = Math.hypot(dx, dy);
+    const swipeLen = Math.hypot(ex - sx, ey - sy);
+    if (swipeLen < SHOT_THRESHOLD) return;
 
-    if (distSwipe < SHOT_THRESHOLD) return;
-
-    // ПОВОРОТ: направляем бросок в сторону нужных ворот, даже если свайп чуть “кривой”
     const target = (fromPlayer.club.key === "loko") ? goals.bottom : goals.top;
-    const aimX = target.x + (Math.random()*goals.mouthW - goals.mouthW/2) * 0.25;
-    const aimY = target.y;
 
-    // но силу берём по длине свайпа
-    const speed = clamp(distSwipe * 14.0, 520, 1300);
+    // сила по длине свайпа
+    const speed = clamp(swipeLen * 14.0, 520, 1300);
 
-    // направление: от шайбы к цели
     const ahead = 54 * fromPlayer.scale * fromPlayer.dir;
     const down  = 58 * fromPlayer.scale;
     const startX = fromPlayer.x + ahead;
     const startY = fromPlayer.y + down;
 
+    // небольшой разброс по X внутри створа
+    const aimX = target.x + (Math.random()*goals.mouthW - goals.mouthW/2) * 0.22;
+    const aimY = target.y;
+
     let vx = aimX - startX;
     let vy = aimY - startY;
     const len = Math.max(1, Math.hypot(vx, vy));
-    vx = vx/len * speed;
-    vy = vy/len * speed;
+    vx = (vx/len) * speed;
+    vy = (vy/len) * speed;
 
     puck.owner = null;
     puck.lastTouch = fromPlayer.club.key;
@@ -711,11 +731,49 @@ APP_JS = r"""
     fromPlayer.shootKick = 0.45;
   }
 
-  function goalieHit(side, px, py){
+  function goalieBox(side){
     const g = side === "top" ? goalies.top : goalies.bottom;
-    const rx = 22;
-    const ry = 26;
-    return (Math.abs(px - g.x) <= rx) && (Math.abs(py - g.y) <= ry);
+    // чуть больше хитбокс — чтобы “ощущалось”, что отбивает
+    return { x:g.x, y:g.y, rx:26, ry:30 };
+  }
+
+  function puckHitsGoalie(side){
+    const b = goalieBox(side);
+    return (Math.abs(puck.x - b.x) <= b.rx) && (Math.abs(puck.y - b.y) <= b.ry);
+  }
+
+  // === Отбивание шайбы вратарём (рикошет) ===
+  function bounceFromGoalie(side){
+    const now = performance.now();
+    if (now < puck.justBouncedUntil) return false;
+
+    const b = goalieBox(side);
+
+    // Отскок по Y: от верхнего — вниз, от нижнего — вверх
+    const speed = Math.hypot(puck.vx, puck.vy);
+    const minSpeed = Math.max(420, speed * 0.75);
+
+    // боковой импульс в зависимости от точки попадания
+    const dx = puck.x - b.x;
+    const sideKick = clamp(dx * 16, -520, 520);
+
+    if (side === "top"){
+      puck.vy = Math.abs(puck.vy);
+    } else {
+      puck.vy = -Math.abs(puck.vy);
+    }
+    puck.vx += sideKick;
+
+    // нормализуем примерно к minSpeed
+    const n = Math.max(1, Math.hypot(puck.vx, puck.vy));
+    puck.vx = (puck.vx / n) * minSpeed;
+    puck.vy = (puck.vy / n) * minSpeed;
+
+    // чтобы не дребезжало внутри хитбокса
+    puck.justBouncedUntil = now + 160;
+
+    flashMessage("СЭЙВ!");
+    return true;
   }
 
   function awardGoal(){
@@ -726,35 +784,42 @@ APP_JS = r"""
     syncPuckToOwner();
   }
 
-  function awardSave(){
-    flashMessage("СЭЙВ!");
+  function awardStop(text="СЭЙВ!"){
+    flashMessage(text);
     puck.owner = getControlled();
     syncPuckToOwner();
   }
 
-  function checkGoalOrSave(){
+  function checkGoalOrOut(){
     const goalLineTopY    = rink.y + goals.lineYPad;
     const goalLineBottomY = rink.y + rink.h - goals.lineYPad;
 
     const inTopMouth    = Math.abs(puck.x - goals.top.x) <= goals.mouthW/2;
     const inBottomMouth = Math.abs(puck.x - goals.bottom.x) <= goals.mouthW/2;
 
+    // пересечение верхней линии
     if (puck.y <= goalLineTopY){
       if (inTopMouth){
-        if (goalieHit("top", puck.x, puck.y)) awardSave();
+        // если попал во вратаря — рикошет
+        if (puckHitsGoalie("top")) bounceFromGoalie("top");
         else awardGoal();
-      } else awardSave();
+      } else {
+        // мимо створа — просто “останов”
+        awardStop("СЭЙВ!");
+      }
       return true;
     }
 
+    // пересечение нижней линии
     if (puck.y >= goalLineBottomY){
       if (inBottomMouth){
-        if (goalieHit("bottom", puck.x, puck.y)) awardSave();
+        if (puckHitsGoalie("bottom")) bounceFromGoalie("bottom");
         else awardGoal();
-      } else awardSave();
+      } else {
+        awardStop("СЭЙВ!");
+      }
       return true;
     }
-
     return false;
   }
 
@@ -768,23 +833,35 @@ APP_JS = r"""
       return;
     }
 
+    // трейл
     const TRAIL_MAX = 12;
     puck.trail.push({x:puck.x, y:puck.y});
     if (puck.trail.length > TRAIL_MAX) puck.trail.shift();
 
+    // шаг
     puck.x += puck.vx * dt;
     puck.y += puck.vy * dt;
 
+    // === Отбивание до линии ворот: если шайба “влетела” в вратаря — рикошет ===
+    // Проверяем по направлению: к верхнему только если летит вверх, к нижнему если летит вниз.
+    if (puck.vy < 0 && puckHitsGoalie("top")){
+      bounceFromGoalie("top");
+    } else if (puck.vy > 0 && puckHitsGoalie("bottom")){
+      bounceFromGoalie("bottom");
+    }
+
+    // сопротивление
     const drag = Math.max(0.0, 1.0 - dt*0.10);
     puck.vx *= drag;
     puck.vy *= drag;
 
+    // борта по X
     const left = rink.x + 18;
     const right = rink.x + rink.w - 18;
     if (puck.x < left){ puck.x = left; puck.vx = Math.abs(puck.vx) * 0.85; }
     if (puck.x > right){ puck.x = right; puck.vx = -Math.abs(puck.vx) * 0.85; }
 
-    checkGoalOrSave();
+    checkGoalOrOut();
   }
 
   function drawPuckTrail(){
@@ -831,7 +908,7 @@ APP_JS = r"""
     return null;
   }
 
-  // управление: тап=выбор, свайп=бросок (только)
+  // управление: тап=выбор, свайп=бросок
   canvas.addEventListener("touchstart", (e) => {
     e.preventDefault();
     if (!e.changedTouches || e.changedTouches.length === 0) return;
