@@ -238,7 +238,6 @@ APP_JS = r"""
   };
 
   const state = {
-    running: true,
     t0: performance.now(),
     logos: { loko:null, spartak:null },
     faces: { loko:null, spartak:null },
@@ -253,22 +252,23 @@ APP_JS = r"""
 
   let rink=null, stands=null, goals=null;
 
-  // Вратари стоят напротив друг друга (одинаковая Y), двигаются только по чуть-чуть по створу
+  // Ворота сверху/снизу. Вратари двигаются по X перед створом.
   const goalies = {
-    left:  { y: 0, baseY: 0, phase: 0.0 },
-    right: { y: 0, baseY: 0, phase: 1.2 }
+    top:    { x:0, baseX:0, y:0, phase: 0.2 },
+    bottom: { x:0, baseX:0, y:0, phase: 1.4 }
   };
 
   const players = [
-    { id:0, club:clubs.loko,    fracX:0.25, fracY:0.82, phase:0.0, scale:0.84, x:0, y:0, vx:0, vy:0, dir:1, shootKick:0 },
-    { id:1, club:clubs.spartak, fracX:0.62, fracY:0.52, phase:1.7, scale:0.80, x:0, y:0, vx:0, vy:0, dir:-1, shootKick:0 }
+    // Локо снизу (атакует ВВЕРХ)
+    { id:0, club:clubs.loko,    fracX:0.50, fracY:0.80, phase:0.0, scale:0.84, x:0, y:0, vx:0, vy:0, dir:1, shootKick:0 },
+    // Спартак выше (атакует ВНИЗ)
+    { id:1, club:clubs.spartak, fracX:0.55, fracY:0.45, phase:1.7, scale:0.80, x:0, y:0, vx:0, vy:0, dir:-1, shootKick:0 }
   ];
 
   const puck = { active:true, x:0, y:0, vx:0, vy:0, owner:null, ttl:999, trail:[] };
 
   const touch = {
-    active:false,
-    id:null,
+    active:false, id:null,
     startX:0, startY:0,
     x:0, y:0,
     startT:0,
@@ -278,6 +278,23 @@ APP_JS = r"""
   function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
   function dist(ax,ay,bx,by){ return Math.hypot(ax-bx, ay-by); }
   function getControlled(){ return players.find(p => p.id === state.controlledId) || players[0]; }
+
+  function flashMessage(text){
+    state.msg = text;
+    state.msgUntil = performance.now() + 850;
+    state.flashUntil = performance.now() + 700;
+  }
+
+  function updateScoreboard(force=false){
+    scoreEl.textContent = `${state.score.loko} : ${state.score.spartak}`;
+    const mm = Math.floor(state.timeLeft / 60);
+    const ss = Math.floor(state.timeLeft % 60);
+    scoreSubEl.textContent = `${state.period} период • ${mm}:${String(ss).padStart(2,"0")}`;
+    if (!force){
+      if (performance.now() < state.flashUntil) scoreboardEl.style.filter = "brightness(1.25)";
+      else scoreboardEl.style.filter = "none";
+    }
+  }
 
   function layout(rescale){
     const old = rink ? { ...rink } : null;
@@ -298,21 +315,24 @@ APP_JS = r"""
 
     stands = { x:0, y:0, w:W, h:standsH };
 
-    const goalInset = Math.max(46, Math.round(rink.w * 0.10));
-    const centerY = rink.y + rink.h/2;
+    // Главное: ворота на крестиках — по центру сверху и снизу
+    const goalInsetY = Math.max(54, Math.round(rink.h * 0.10));
+    const centerX = rink.x + rink.w/2;
 
-    // ВОРОТА НАПРОТИВ ДРУГ ДРУГА: одинаковый Y
     goals = {
-      left:  { x: rink.x + goalInset, y: centerY },
-      right: { x: rink.x + rink.w - goalInset, y: centerY },
-      mouthH: Math.max(70, Math.round(rink.h * 0.14)),
-      lineXPad: Math.max(18, Math.round(rink.w * 0.02))
+      top:    { x: centerX, y: rink.y + goalInsetY },
+      bottom: { x: centerX, y: rink.y + rink.h - goalInsetY },
+      mouthW: Math.max(120, Math.round(rink.w * 0.30)), // ширина створа
+      lineYPad: Math.max(18, Math.round(rink.h * 0.02))
     };
 
-    goalies.left.baseY = centerY;
-    goalies.right.baseY = centerY;
-    goalies.left.y = centerY;
-    goalies.right.y = centerY;
+    goalies.top.y = goals.top.y + 26;
+    goalies.bottom.y = goals.bottom.y - 26;
+
+    goalies.top.baseX = centerX;
+    goalies.bottom.baseX = centerX;
+    goalies.top.x = centerX;
+    goalies.bottom.x = centerX;
 
     if (rescale && old){
       for (const p of players){
@@ -336,23 +356,6 @@ APP_JS = r"""
     }
   }
 
-  function flashMessage(text){
-    state.msg = text;
-    state.msgUntil = performance.now() + 850;
-    state.flashUntil = performance.now() + 700;
-  }
-
-  function updateScoreboard(force=false){
-    scoreEl.textContent = `${state.score.loko} : ${state.score.spartak}`;
-    const mm = Math.floor(state.timeLeft / 60);
-    const ss = Math.floor(state.timeLeft % 60);
-    scoreSubEl.textContent = `${state.period} период • ${mm}:${String(ss).padStart(2,"0")}`;
-    if (!force){
-      if (performance.now() < state.flashUntil) scoreboardEl.style.filter = "brightness(1.25)";
-      else scoreboardEl.style.filter = "none";
-    }
-  }
-
   function reset(){
     for (const p of players){
       p.x = rink.x + rink.w * p.fracX;
@@ -368,12 +371,13 @@ APP_JS = r"""
     state.msg = ""; state.msgUntil = 0;
     state.flashUntil = 0;
 
+    state.controlledId = 0;
+
     puck.active = true;
-    puck.owner = players[0];
+    puck.owner = players[0]; // старт у Локо
     puck.trail = [];
     syncPuckToOwner();
 
-    state.controlledId = 0;
     state.t0 = performance.now();
     updateScoreboard(true);
   }
@@ -429,6 +433,7 @@ APP_JS = r"""
     ctx.strokeStyle = "#1d3a56";
     ctx.stroke();
 
+    // центральная линия (горизонтальная)
     ctx.beginPath();
     ctx.moveTo(rink.x, rink.y + rink.h/2);
     ctx.lineTo(rink.x + rink.w, rink.y + rink.h/2);
@@ -436,77 +441,85 @@ APP_JS = r"""
     ctx.strokeStyle = "rgba(200,40,40,.55)";
     ctx.stroke();
 
+    // "синие" (горизонтальные) — как будто зоны
     for (const k of [0.33, 0.67]){
-      const xx = rink.x + rink.w * k;
+      const yy = rink.y + rink.h * k;
       ctx.beginPath();
-      ctx.moveTo(xx, rink.y);
-      ctx.lineTo(xx, rink.y + rink.h);
+      ctx.moveTo(rink.x, yy);
+      ctx.lineTo(rink.x + rink.w, yy);
       ctx.lineWidth = 3;
       ctx.strokeStyle = "rgba(40,120,220,.50)";
       ctx.stroke();
     }
 
+    // гол-линии (по Y)
     ctx.lineWidth = 3;
     ctx.strokeStyle = "rgba(200,40,40,.35)";
     ctx.beginPath();
-    ctx.moveTo(rink.x + goals.lineXPad, rink.y);
-    ctx.lineTo(rink.x + goals.lineXPad, rink.y + rink.h);
-    ctx.moveTo(rink.x + rink.w - goals.lineXPad, rink.y);
-    ctx.lineTo(rink.x + rink.w - goals.lineXPad, rink.y + rink.h);
+    ctx.moveTo(rink.x, rink.y + goals.lineYPad);
+    ctx.lineTo(rink.x + rink.w, rink.y + goals.lineYPad);
+    ctx.moveTo(rink.x, rink.y + rink.h - goals.lineYPad);
+    ctx.lineTo(rink.x + rink.w, rink.y + rink.h - goals.lineYPad);
     ctx.stroke();
   }
 
-  function drawGoal(cx, cy){
+  // Ворота рисуем "горизонтально"
+  function drawGoalHorizontal(cx, cy, flipY){
     ctx.save();
     ctx.translate(cx, cy);
 
+    // тень
     ctx.globalAlpha = 0.16;
     ctx.fillStyle = "#000";
     ctx.beginPath();
-    ctx.ellipse(0, 28, 60, 10, 0, 0, Math.PI*2);
+    ctx.ellipse(0, flipY ? -28 : 28, 60, 10, 0, 0, Math.PI*2);
     ctx.fill();
     ctx.globalAlpha = 1;
 
+    // сетка
     ctx.save();
     ctx.strokeStyle = "rgba(120,140,160,.35)";
     ctx.lineWidth = 1;
+    const top = flipY ? 12 : -12;
+    const bottom = flipY ? -22 : 22;
     for (let x=-44; x<=44; x+=10){
-      ctx.beginPath(); ctx.moveTo(x, -10); ctx.lineTo(x-10, 30); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x-10, bottom); ctx.stroke();
     }
-    for (let y=-10; y<=30; y+=8){
+    for (let y=-12; y<=22; y+=8){
       ctx.beginPath(); ctx.moveTo(-44, y); ctx.lineTo(44, y); ctx.stroke();
     }
     ctx.restore();
 
+    // рама
     ctx.strokeStyle = "rgba(220,40,40,.95)";
     ctx.lineWidth = 6;
     ctx.lineCap = "round";
     ctx.beginPath();
-    ctx.moveTo(-48, 22);
-    ctx.lineTo(-48, -12);
+    // перекладина
+    ctx.moveTo(-48, -12);
     ctx.lineTo( 48, -12);
-    ctx.lineTo( 48, 22);
+    // стойки
+    ctx.moveTo(-48, -12);
+    ctx.lineTo(-48,  22);
+    ctx.moveTo( 48, -12);
+    ctx.lineTo( 48,  22);
     ctx.stroke();
 
     ctx.restore();
   }
 
   function updateGoalies(t){
-    // лёгкое движение по створу, но базовая точка у обоих ОДИНАКОВА
-    const sway = Math.sin(t*1.0) * (goals.mouthH * 0.10);
-    goalies.left.y  = goalies.left.baseY  + sway;
-    goalies.right.y = goalies.right.baseY - sway;
+    // Вратари ходят по X вдоль створа
+    const sway = Math.sin(t*1.0) * (goals.mouthW * 0.18);
+    goalies.top.x = goalies.top.baseX + sway;
+    goalies.bottom.x = goalies.bottom.baseX - sway;
   }
 
   function drawGoalie(side){
-    const g = (side === "left") ? goalies.left : goalies.right;
-    const gx = (side === "left") ? goals.left.x : goals.right.x;
+    const g = side === "top" ? goalies.top : goalies.bottom;
 
     ctx.save();
-    ctx.translate(gx, g.y);
-
-    const offsetX = (side === "left") ? 16 : -16;
-    ctx.translate(offsetX, 18);
+    ctx.translate(g.x, g.y);
 
     ctx.globalAlpha = 0.22;
     ctx.beginPath();
@@ -626,7 +639,7 @@ APP_JS = r"""
     ctx.restore();
 
     // выбранный игрок
-    if (p.id == state.controlledId){
+    if (p.id === state.controlledId){
       ctx.save();
       ctx.globalAlpha = 0.35;
       ctx.strokeStyle = "rgba(255,255,255,.9)";
@@ -707,16 +720,8 @@ APP_JS = r"""
     puck.ttl = 999;
   }
 
-  function shootToOpponentGoal(player){
-    // простой бросок: всегда в центр ворот соперника (чуть рандома по Y)
-    const target = (player.club.key === "loko") ? goals.right : goals.left;
-    const tx = target.x;
-    const ty = target.y + (Math.random()*goals.mouthH - goals.mouthH/2) * 0.35;
-    shootPuck(player, tx, ty);
-  }
-
   function shootPuck(fromPlayer, tx, ty){
-    if (puck.owner !== fromPlayer) return; // бросать может только владелец
+    if (puck.owner !== fromPlayer) return;
     puck.owner = null;
     puck.active = true;
     puck.trail = [];
@@ -736,42 +741,84 @@ APP_JS = r"""
     fromPlayer.shootKick = 0.45;
   }
 
+  function shootToOpponentGoal(player){
+    // Локо атакует TOP, Спартак атакует BOTTOM
+    const target = (player.club.key === "loko") ? goals.top : goals.bottom;
+    const tx = target.x + (Math.random()*goals.mouthW - goals.mouthW/2) * 0.30;
+    const ty = target.y;
+    shootPuck(player, tx, ty);
+  }
+
   function checkGoalOrSave(){
-    const goalLineLeftX  = rink.x + goals.lineXPad;
-    const goalLineRightX = rink.x + rink.w - goals.lineXPad;
+    const goalLineTopY    = rink.y + goals.lineYPad;
+    const goalLineBottomY = rink.y + rink.h - goals.lineYPad;
 
-    const inLeftMouth  = Math.abs(puck.y - goals.left.y)  <= goals.mouthH/2;
-    const inRightMouth = Math.abs(puck.y - goals.right.y) <= goals.mouthH/2;
+    const inTopMouth    = Math.abs(puck.x - goals.top.x) <= goals.mouthW/2;
+    const inBottomMouth = Math.abs(puck.x - goals.bottom.x) <= goals.mouthW/2;
 
-    if (puck.x <= goalLineLeftX){
-      const goalieClose = Math.abs(puck.y - goalies.left.y) <= goals.mouthH*0.35;
-      if (inLeftMouth && goalieClose){
+    // TOP линия
+    if (puck.y <= goalLineTopY){
+      const goalieClose = Math.abs(puck.x - goalies.top.x) <= goals.mouthW * 0.28;
+      if (inTopMouth and goalieClose){
         flashMessage("СЭЙВ!");
-      } else if (inLeftMouth){
-        state.score.spartak += 1;
+      } else if (inTopMouth){
+        state.score.loko += 1;      // гол в верхние ворота = Локо забил (атакует вверх)
         flashMessage("ГОЛ!");
       } else {
         flashMessage("СЭЙВ!");
       }
       puck.owner = getControlled();
       syncPuckToOwner();
-      return true;
+      return True;
     }
 
-    if (puck.x >= goalLineRightX){
-      const goalieClose = Math.abs(puck.y - goalies.right.y) <= goals.mouthH*0.35;
-      if (inRightMouth && goalieClose){
+    // BOTTOM линия
+    if (puck.y >= goalLineBottomY){
+      const goalieClose = Math.abs(puck.x - goalies.bottom.x) <= goals.mouthW * 0.28;
+      if (inBottomMouth and goalieClose){
         flashMessage("СЭЙВ!");
-      } else if (inRightMouth){
-        state.score.loko += 1;
+      } else if (inBottomMouth){
+        state.score.spartak += 1;   // гол в нижние ворота = Спартак забил (атакует вниз)
         flashMessage("ГОЛ!");
       } else {
         flashMessage("СЭЙВ!");
       }
       puck.owner = getControlled();
       syncPuckToOwner();
+      return True;
+    }
+
+    return False;
+  }
+
+  // JS doesn't have True/False, fix above (typo protection)
+  function checkGoalOrSaveFixed(){
+    const goalLineTopY    = rink.y + goals.lineYPad;
+    const goalLineBottomY = rink.y + rink.h - goals.lineYPad;
+
+    const inTopMouth    = Math.abs(puck.x - goals.top.x) <= goals.mouthW/2;
+    const inBottomMouth = Math.abs(puck.x - goals.bottom.x) <= goals.mouthW/2;
+
+    if (puck.y <= goalLineTopY){
+      const goalieClose = Math.abs(puck.x - goalies.top.x) <= goals.mouthW * 0.28;
+      if (inTopMouth && goalieClose) flashMessage("СЭЙВ!");
+      else if (inTopMouth){ state.score.loko += 1; flashMessage("ГОЛ!"); }
+      else flashMessage("СЭЙВ!");
+      puck.owner = getControlled();
+      syncPuckToOwner();
       return true;
     }
+
+    if (puck.y >= goalLineBottomY){
+      const goalieClose = Math.abs(puck.x - goalies.bottom.x) <= goals.mouthW * 0.28;
+      if (inBottomMouth && goalieClose) flashMessage("СЭЙВ!");
+      else if (inBottomMouth){ state.score.spartak += 1; flashMessage("ГОЛ!"); }
+      else flashMessage("СЭЙВ!");
+      puck.owner = getControlled();
+      syncPuckToOwner();
+      return true;
+    }
+
     return false;
   }
 
@@ -796,12 +843,13 @@ APP_JS = r"""
     puck.vx *= drag;
     puck.vy *= drag;
 
-    const top = rink.y + 18;
-    const bottom = rink.y + rink.h - 18;
-    if (puck.y < top){ puck.y = top; puck.vy = Math.abs(puck.vy) * 0.85; }
-    if (puck.y > bottom){ puck.y = bottom; puck.vy = -Math.abs(puck.vy) * 0.85; }
+    // bounds X
+    const left = rink.x + 18;
+    const right = rink.x + rink.w - 18;
+    if (puck.x < left){ puck.x = left; puck.vx = Math.abs(puck.vx) * 0.85; }
+    if (puck.x > right){ puck.x = right; puck.vx = -Math.abs(puck.vx) * 0.85; }
 
-    checkGoalOrSave();
+    checkGoalOrSaveFixed();
   }
 
   function drawPuckTrail(){
@@ -848,10 +896,9 @@ APP_JS = r"""
     return null;
   }
 
-  // === Управление ===
-  // свайп/перетаскивание = движение выбранного игрока
-  // одинарный тап по игроку = выбрать игрока
-  // одинарный тап по льду = бросок в ворота соперника (если шайба у выбранного)
+  // Управление: свайп = движение выбранного игрока
+  // тап по игроку = выбор игрока
+  // тап по льду = бросок в ворота соперника
   canvas.addEventListener("touchstart", (e) => {
     e.preventDefault();
     if (!e.changedTouches || e.changedTouches.length === 0) return;
@@ -900,15 +947,12 @@ APP_JS = r"""
 
     const controlled = getControlled();
 
-    // ТАП (без движения) = либо выбор игрока, либо бросок
     if (!touch.moved && heldMs < 260){
       const picked = playerAt(x,y);
       if (picked){
         state.controlledId = picked.id;
-        // если шайба у выбранного — синхронизируем
         if (puck.owner === picked) syncPuckToOwner();
       } else {
-        // один тап по льду = бросок в ворота соперника
         shootToOpponentGoal(controlled);
       }
     }
@@ -923,7 +967,6 @@ APP_JS = r"""
     touch.id = null;
   }, { passive:false });
 
-  // === Движение ===
   function updateControlledPlayer(dt){
     const p = getControlled();
 
@@ -956,12 +999,13 @@ APP_JS = r"""
     p.y += p.vy * dt;
 
     p.x = clamp(p.x, rink.x+70, rink.x+rink.w-70);
-    p.y = clamp(p.y, rink.y+90, rink.y+rink.h-70);
+    p.y = clamp(p.y, rink.y+90, rink.y+rink.h-90);
   }
 
   function updateAIPlayer(p, dt, t){
-    const baseX = (p.club.key === "loko") ? (rink.x + rink.w*0.35) : (rink.x + rink.w*0.65);
-    const baseY = (p.club.key === "loko") ? (rink.y + rink.h*0.62) : (rink.y + rink.h*0.42);
+    // простой AI
+    const baseX = rink.x + rink.w * (p.club.key === "loko" ? 0.48 : 0.54);
+    const baseY = rink.y + rink.h * (p.club.key === "loko" ? 0.72 : 0.38);
 
     let tx = baseX + Math.sin(t*0.6 + p.phase) * (rink.w*0.16);
     let ty = baseY + Math.cos(t*0.7 + p.phase) * (rink.h*0.10);
@@ -987,7 +1031,7 @@ APP_JS = r"""
     p.y += p.vy * dt;
 
     p.x = clamp(p.x, rink.x+70, rink.x+rink.w-70);
-    p.y = clamp(p.y, rink.y+90, rink.y+rink.h-70);
+    p.y = clamp(p.y, rink.y+90, rink.y+rink.h-90);
   }
 
   function maybePickup(){
@@ -1002,20 +1046,6 @@ APP_JS = r"""
       puck.owner = best;
       syncPuckToOwner();
     }
-  }
-
-  // === Рендер/логика ===
-  function drawCenterMessage(){
-    if (performance.now() > state.msgUntil) return;
-    ctx.save();
-    ctx.font = `900 34px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillStyle = "rgba(255,255,255,.92)";
-    ctx.shadowColor = "rgba(0,0,0,.55)";
-    ctx.shadowBlur = 12;
-    ctx.fillText(state.msg, W/2, H*0.62);
-    ctx.restore();
   }
 
   let lastNow = performance.now();
@@ -1056,10 +1086,12 @@ APP_JS = r"""
     drawStands();
     drawIce();
 
-    drawGoal(goals.left.x, goals.left.y);
-    drawGoal(goals.right.x, goals.right.y);
-    drawGoalie("left");
-    drawGoalie("right");
+    // ворота в местах крестиков: сверху и снизу по центру
+    drawGoalHorizontal(goals.top.x, goals.top.y, true);
+    drawGoalHorizontal(goals.bottom.x, goals.bottom.y, false);
+
+    drawGoalie("top");
+    drawGoalie("bottom");
 
     drawPuckTrail();
     drawPuckNow();
@@ -1073,7 +1105,6 @@ APP_JS = r"""
     requestAnimationFrame(tick);
   }
 
-  // ассеты
   loadImage("assets/loko.png", img => state.logos.loko = img);
   loadImage("assets/spartak.png", img => state.logos.spartak = img);
   loadImage("assets/face_loko.png", img => state.faces.loko = img);
@@ -1120,7 +1151,7 @@ def main():
 
     print(f"\nBUILD={BUILD}")
     print(f"Подключены: {CSS_NAME} и {JS_NAME}")
-    print("Управление: свайп = движение выбранного игрока, тап по игроку = выбор, тап по льду = бросок в ворота.")
+    print("Ворота: сверху/снизу. Управление: свайп=движение, тап по игроку=выбор, тап по льду=бросок.")
 
 if __name__ == "__main__":
     main()
