@@ -93,11 +93,12 @@
   };
 
   const players = [
-    { id:0, club:clubs.loko,    fracX:0.50, fracY:0.78, phase:0.0, scale:0.84, x:0, y:0, dir:1, shootKick:0 },
-    { id:1, club:clubs.spartak, fracX:0.55, fracY:0.45, phase:1.7, scale:0.80, x:0, y:0, dir:-1, shootKick:0 }
+    // добавили vx/vy для катания
+    { id:0, club:clubs.loko,    fracX:0.50, fracY:0.78, phase:0.0, scale:0.84, x:0, y:0, vx:0, vy:0, dir:1, shootKick:0 },
+    { id:1, club:clubs.spartak, fracX:0.55, fracY:0.45, phase:1.7, scale:0.80, x:0, y:0, vx:0, vy:0, dir:-1, shootKick:0 }
   ];
 
-  // Шайба + lastTouch (кто последний владел шайбой)
+  // Шайба + lastTouch (кто последний бил)
   const puck = { x:0, y:0, vx:0, vy:0, owner:null, ttl:999, trail:[], lastTouch:"loko" };
 
   // Управление свайпом
@@ -108,6 +109,10 @@
     startT:0,
     moved:false,
   };
+
+  // пороги
+  const MOVE_THRESHOLD = 18;     // чтобы распознать что это свайп, а не тап
+  const SHOT_THRESHOLD = 90;     // длинный свайп = бросок, короткий = катание
 
   function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
   function dist(ax,ay,bx,by){ return Math.hypot(ax-bx, ay-by); }
@@ -131,8 +136,6 @@
   }
 
   function layout(rescale){
-    const old = rink ? { ...rink } : null;
-
     const marginX = Math.max(10, Math.round(W * 0.05));
     const standsH = Math.max(36, Math.round(H * 0.08));
     const topY = standsH + 6;
@@ -149,7 +152,6 @@
 
     stands = { x:0, y:0, w:W, h:standsH };
 
-    // Ворота сверху/снизу по центру (как на крестиках)
     const goalInsetY = Math.max(54, Math.round(rink.h * 0.10));
     const centerX = rink.x + rink.w/2;
 
@@ -160,8 +162,7 @@
       lineYPad: Math.max(18, Math.round(rink.h * 0.02))
     };
 
-    // ВАЖНО: нижний вратарь должен быть ПЕРЕД воротами => выше ворот (меньше Y)
-    // верхний — перед воротами => ниже ворот (больше Y)
+    // нижний вратарь ПЕРЕД воротами => выше ворот
     goalies.top.y = goals.top.y + 36;
     goalies.bottom.y = goals.bottom.y - 36;
 
@@ -170,23 +171,19 @@
     goalies.top.x = centerX;
     goalies.bottom.x = centerX;
 
-    // игроки на фикс позициях
-    for (const p of players){
-      p.x = rink.x + rink.w * p.fracX;
-      p.y = rink.y + rink.h * p.fracY;
+    if (!rescale){
+      for (const p of players){
+        p.x = rink.x + rink.w * p.fracX;
+        p.y = rink.y + rink.h * p.fracY;
+        p.vx = 0; p.vy = 0;
+      }
+      puck.owner = getControlled();
+      puck.lastTouch = puck.owner.club.key;
+      syncPuckToOwner();
     }
 
-    // шайба у выбранного игрока
-    const c = getControlled();
-    puck.owner = c;
-    puck.lastTouch = c.club.key;
-    syncPuckToOwner();
-
-    if (rescale && old){
-      // ничего: мы хотим простую фикс-геометрию
-      touch.active = false;
-      touch.id = null;
-    }
+    touch.active = false;
+    touch.id = null;
   }
 
   function reset(){
@@ -197,6 +194,12 @@
     state.msg = ""; state.msgUntil = 0;
     state.flashUntil = 0;
     state.controlledId = 0;
+
+    for (const p of players){
+      p.x = rink.x + rink.w * p.fracX;
+      p.y = rink.y + rink.h * p.fracY;
+      p.vx = 0; p.vy = 0;
+    }
 
     puck.owner = players[0];
     puck.lastTouch = "loko";
@@ -258,7 +261,6 @@
     ctx.strokeStyle = "#1d3a56";
     ctx.stroke();
 
-    // центральная линия
     ctx.beginPath();
     ctx.moveTo(rink.x, rink.y + rink.h/2);
     ctx.lineTo(rink.x + rink.w, rink.y + rink.h/2);
@@ -266,7 +268,6 @@
     ctx.strokeStyle = "rgba(200,40,40,.55)";
     ctx.stroke();
 
-    // зоны
     for (const k of [0.33, 0.67]){
       const yy = rink.y + rink.h * k;
       ctx.beginPath();
@@ -277,7 +278,6 @@
       ctx.stroke();
     }
 
-    // гол-линии
     ctx.lineWidth = 3;
     ctx.strokeStyle = "rgba(200,40,40,.35)";
     ctx.beginPath();
@@ -288,7 +288,6 @@
     ctx.stroke();
   }
 
-  // Ворота: TOP лицом вниз, BOTTOM лицом вверх (зеркало по Y)
   function drawGoalHorizontal(cx, cy, faceDown){
     ctx.save();
     ctx.translate(cx, cy);
@@ -398,8 +397,12 @@
 
   function drawPlayer(p, t){
     const bob = Math.sin(t*2.2 + p.phase) * 2.0;
+
     if (p.shootKick > 0) p.shootKick = Math.max(0, p.shootKick - 1/60);
     const kick = p.shootKick;
+
+    // направление по vx (для “лицом к движению”)
+    if (Math.abs(p.vx) > 6) p.dir = p.vx > 0 ? 1 : -1;
 
     const faceImg = (p.club.key === "loko") ? state.faces.loko : state.faces.spartak;
 
@@ -416,7 +419,6 @@
     ctx.fill();
     ctx.restore();
 
-    // клюшка
     ctx.save();
     const stickAngle = -0.30 - kick*0.55;
     ctx.rotate(stickAngle);
@@ -429,7 +431,6 @@
     ctx.beginPath(); ctx.moveTo(0, 78); ctx.lineTo(42, 78); ctx.stroke();
     ctx.restore();
 
-    // корпус
     ctx.save();
     roundedRectPath(-34, -10, 68, 82, 18);
     ctx.fillStyle = p.club.primary;
@@ -445,7 +446,6 @@
     drawEmblem(0, 28, 16, p.club);
     ctx.restore();
 
-    // выбранный игрок
     if (p.id === state.controlledId){
       ctx.save();
       ctx.globalAlpha = 0.35;
@@ -457,7 +457,6 @@
       ctx.restore();
     }
 
-    // голова
     ctx.save();
     ctx.beginPath();
     ctx.arc(0, -28, 24, 0, Math.PI*2);
@@ -479,7 +478,6 @@
     }
     ctx.restore();
 
-    // ноги+коньки
     function leg(offX, offY){
       ctx.save();
       ctx.translate(offX, offY);
@@ -532,21 +530,16 @@
     const dy = ey - sy;
     const distSwipe = Math.hypot(dx, dy);
 
-    // слабый свайп игнорируем
-    if (distSwipe < 24) return;
+    if (distSwipe < SHOT_THRESHOLD) return;
 
-    // скорость зависит от длины свайпа
-    const speed = clamp(distSwipe * 14.0, 420, 1200);
-
-    // нормализуем
+    const speed = clamp(distSwipe * 14.0, 520, 1300);
     const len = Math.max(1, Math.hypot(dx, dy));
     const ux = dx/len, uy = dy/len;
 
     puck.owner = null;
-    puck.lastTouch = fromPlayer.club.key;  // КТО БИЛ — тот и “автор” гола
+    puck.lastTouch = fromPlayer.club.key;
     puck.trail = [];
 
-    // стартуем от игрока
     const ahead = 54 * fromPlayer.scale * fromPlayer.dir;
     const down  = 58 * fromPlayer.scale;
     puck.x = fromPlayer.x + ahead;
@@ -559,22 +552,43 @@
     fromPlayer.shootKick = 0.45;
   }
 
+  // КОРОТКИЙ СВАЙП => катание выбранного игрока
+  function skateBySwipe(player, sx, sy, ex, ey){
+    const dx = ex - sx;
+    const dy = ey - sy;
+    const d = Math.hypot(dx, dy);
+    if (d < MOVE_THRESHOLD) return;        // это скорее тап
+    if (d >= SHOT_THRESHOLD) return;       // длинный — это бросок
+
+    const len = Math.max(1, d);
+    const ux = dx/len, uy = dy/len;
+
+    // импульс (чем длиннее короткий свайп — тем сильнее толчок)
+    const impulse = clamp(d * 10.0, 120, 650);
+
+    player.vx += ux * impulse;
+    player.vy += uy * impulse;
+
+    // ограничим максимум
+    const maxV = 780;
+    const v = Math.hypot(player.vx, player.vy);
+    if (v > maxV){
+      player.vx = player.vx / v * maxV;
+      player.vy = player.vy / v * maxV;
+    }
+  }
+
   function goalieHit(side, px, py){
     const g = side === "top" ? goalies.top : goalies.bottom;
-    // очень простой хитбокс
     const rx = 22;
     const ry = 26;
     return (Math.abs(px - g.x) <= rx) && (Math.abs(py - g.y) <= ry);
   }
 
   function awardGoal(){
-    if (puck.lastTouch === "loko"){
-      state.score.loko += 1;
-    } else if (puck.lastTouch === "spartak"){
-      state.score.spartak += 1;
-    }
+    if (puck.lastTouch === "loko") state.score.loko += 1;
+    else if (puck.lastTouch === "spartak") state.score.spartak += 1;
     flashMessage("ГОЛ!");
-    // после гола отдаём шайбу выбранному игроку
     puck.owner = getControlled();
     syncPuckToOwner();
   }
@@ -592,25 +606,19 @@
     const inTopMouth    = Math.abs(puck.x - goals.top.x) <= goals.mouthW/2;
     const inBottomMouth = Math.abs(puck.x - goals.bottom.x) <= goals.mouthW/2;
 
-    // TOP пересечение
     if (puck.y <= goalLineTopY){
       if (inTopMouth){
         if (goalieHit("top", puck.x, puck.y)) awardSave();
         else awardGoal();
-      } else {
-        awardSave();
-      }
+      } else awardSave();
       return true;
     }
 
-    // BOTTOM пересечение
     if (puck.y >= goalLineBottomY){
       if (inBottomMouth){
-        if (goalieHit("bottom", puck.x, puck.y)) awardSave()
+        if (goalieHit("bottom", puck.x, puck.y)) awardSave();
         else awardGoal();
-      } else {
-        awardSave();
-      }
+      } else awardSave();
       return true;
     }
 
@@ -690,7 +698,7 @@
     return null;
   }
 
-  // === Управление: только выбор игрока и свайп-бросок ===
+  // управление: тап=выбор, короткий свайп=катание, длинный свайп=бросок
   canvas.addEventListener("touchstart", (e) => {
     e.preventDefault();
     if (!e.changedTouches || e.changedTouches.length === 0) return;
@@ -719,7 +727,7 @@
     const { x, y } = eventToCanvasXY(e, tmatch);
     touch.x = x; touch.y = y;
 
-    if (dist(touch.startX, touch.startY, x, y) > 18) touch.moved = true;
+    if (dist(touch.startX, touch.startY, x, y) > MOVE_THRESHOLD) touch.moved = true;
   }, { passive:false });
 
   canvas.addEventListener("touchend", (e) => {
@@ -736,21 +744,26 @@
     const heldMs = performance.now() - touch.startT;
 
     const controlled = getControlled();
+    const swipeLen = dist(touch.startX, touch.startY, x, y);
 
-    // Тап: выбрать игрока
+    // тап: выбор игрока
     if (!touch.moved && heldMs < 260){
       const picked = playerAt(x,y);
       if (picked){
         state.controlledId = picked.id;
-        puck.owner = picked;          // для простоты: шайба всегда у выбранного
+        puck.owner = picked;
         puck.lastTouch = picked.club.key;
         syncPuckToOwner();
       }
     }
 
-    // Свайп: бросок
+    // свайп: сначала проверяем бросок (длинный), иначе катание (короткий)
     if (touch.moved){
-      shootBySwipe(controlled, touch.startX, touch.startY, x, y);
+      if (swipeLen >= SHOT_THRESHOLD){
+        shootBySwipe(controlled, touch.startX, touch.startY, x, y);
+      } else {
+        skateBySwipe(controlled, touch.startX, touch.startY, x, y);
+      }
     }
 
     touch.active = false;
@@ -763,7 +776,32 @@
     touch.id = null;
   }, { passive:false });
 
-  // === AI для вратарей (чуть двигаются) ===
+  // физика катания
+  function updateSkating(dt){
+    const friction = Math.exp(-dt * 2.2); // трение
+    for (const p of players){
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+
+      p.vx *= friction;
+      p.vy *= friction;
+
+      // границы площадки (простые)
+      const padX = 70;
+      const padY = 90;
+
+      const minX = rink.x + padX;
+      const maxX = rink.x + rink.w - padX;
+      const minY = rink.y + padY;
+      const maxY = rink.y + rink.h - padY;
+
+      if (p.x < minX){ p.x = minX; p.vx = -p.vx * 0.35; }
+      if (p.x > maxX){ p.x = maxX; p.vx = -p.vx * 0.35; }
+      if (p.y < minY){ p.y = minY; p.vy = -p.vy * 0.35; }
+      if (p.y > maxY){ p.y = maxY; p.vy = -p.vy * 0.35; }
+    }
+  }
+
   function tickGoalies(t){
     const sway = Math.sin(t*0.9) * (goals.mouthW * 0.18);
     goalies.top.x = goalies.top.baseX + sway;
@@ -786,9 +824,12 @@
     }
 
     const t = ((now - state.t0)/1000);
+
+    updateSkating(dt);
     tickGoalies(t);
 
     if (puck.owner){
+      // шайба “приклеена” к владельцу
       syncPuckToOwner();
     } else {
       updateShotPuck(dt);
