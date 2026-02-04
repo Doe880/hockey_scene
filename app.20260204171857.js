@@ -164,10 +164,10 @@
 
     // ✅ ФИКС: верхний вратарь ближе к воротам
     // topOffset меньше, bottomOffset можно оставить больше
-    const topOffset = Math.max(34, Math.round(rink.h * 0.035));     // было ~0.06 — слишком далеко
+    const topOffset = Math.max(18, Math.round(rink.h * 0.018));      // было ~0.06 — слишком далеко
     const bottomOffset = Math.max(58, Math.round(rink.h * 0.060));  // как раньше, выглядит ок
 
-    goalies.top.y = goals.top.y + topOffset;           // ближе к воротам
+    goalies.top.y = goals.top.y + topOffset;         // ближе к воротам
     goalies.bottom.y = goals.bottom.y - bottomOffset;  // перед воротами
 
     goalies.top.baseX = centerX;
