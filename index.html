@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>Хоккей: Локомотив vs Спартак</title>
+  <link rel="stylesheet" href="style.20260204133439.css" />
+</head>
+<body>
+  <header class="topbar" id="topbar">
+    <div class="title">
+      <div class="matchline">
+        <div class="team left">
+          <div class="team-row">
+            <img class="team-logo" src="assets/loko.png" alt="Локомотив" onerror="this.style.display='none'">
+            <div class="team-name">Локомотив Ярославль</div>
+          </div>
+          <div class="team-sub">красные</div>
+        </div>
+
+        <div class="scoreboard" id="scoreboard" aria-label="Табло">
+          <div class="score" id="score">0 : 0</div>
+          <div class="score-sub" id="scoreSub">1 период • 20:00</div>
+        </div>
+
+        <div class="team right">
+          <div class="team-row">
+            <div class="team-name">Спартак Пятигорск</div>
+            <img class="team-logo" src="assets/spartak.png" alt="Спартак" onerror="this.style.display='none'">
+          </div>
+          <div class="team-sub">бело-красные</div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="stage">
+    <canvas id="scene" width="900" height="1200"></canvas>
+  </main>
+
+  <script src="app.20260204133439.js"></script>
+</body>
+</html>
